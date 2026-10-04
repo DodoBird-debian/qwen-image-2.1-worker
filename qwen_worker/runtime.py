@@ -15,7 +15,24 @@ def download_model(settings: Settings) -> str:
             raise ValueError("MODEL_PATH must contain a complete Diffusers model snapshot")
         return settings.model_path
 
-    # 1. Check if model is in RunPod's volume cache (/runpod-volume)
+    # 1. Exact RunPod official Cached Models pattern:
+    # /runpod-volume/huggingface-cache/hub/models--{org}--{name}/snapshots/{hash}/
+    formatted_id = f"models--{settings.model_id.replace('/', '--')}"
+    for base in [Path("/runpod-volume/huggingface-cache/hub"), Path("/runpod-volume/huggingface/hub")]:
+        snapshot_dir = base / formatted_id / "snapshots"
+        if snapshot_dir.is_dir():
+            snapshots = [p for p in snapshot_dir.iterdir() if p.is_dir()]
+            if snapshots:
+                for snap in snapshots:
+                    if snap.name == settings.model_revision and (snap / "model_index.json").is_file():
+                        logger.info("Found exact revision cached model at: %s", snap)
+                        return str(snap)
+                for snap in snapshots:
+                    if (snap / "model_index.json").is_file():
+                        logger.info("Found cached model at: %s", snap)
+                        return str(snap)
+
+    # 2. General scan in /runpod-volume
     runpod_vol = Path("/runpod-volume")
     if runpod_vol.is_dir():
         target_name = settings.model_id.split("/")[-1].lower()  # "qwen-image-2.1"
