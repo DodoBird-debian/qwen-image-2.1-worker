@@ -10,11 +10,19 @@ logger = logging.getLogger(__name__)
 
 
 def download_model(settings: Settings) -> str:
-    configure_cache()
     if settings.model_path:
         if not (Path(settings.model_path) / "model_index.json").is_file():
             raise ValueError("MODEL_PATH must contain a complete Diffusers model snapshot")
         return settings.model_path
+
+    # Check if weights are baked into the container image (prevents re-downloading if RunPod mounts a volume)
+    opt_hf = Path("/opt/huggingface")
+    if opt_hf.is_dir():
+        for candidate in opt_hf.glob("**/model_index.json"):
+            logger.info("Found baked model in container: %s", candidate.parent)
+            return str(candidate.parent)
+
+    configure_cache()
     from huggingface_hub import snapshot_download
 
     return snapshot_download(

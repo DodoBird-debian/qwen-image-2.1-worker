@@ -31,7 +31,8 @@ COPY scripts/download_model.py /app/scripts/download_model.py
 RUN python /app/scripts/download_model.py
 
 # Runtime resolves the baked snapshot locally and never checks Hugging Face.
-ENV HF_HUB_OFFLINE=1
+ENV HF_HUB_OFFLINE=1 \
+    MODEL_PATH=/opt/huggingface/hub/models--Qwen--Qwen-Image-2.1/snapshots/790c92633540aa0cb11d9abf19eb46d861714758
 
 COPY handler.py /app/handler.py
 COPY examples /app/examples
