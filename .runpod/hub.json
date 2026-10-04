@@ -29,21 +29,25 @@
         "input": {
           "name": "CPU offloading",
           "type": "string",
-          "description": "Trade GPU memory for slower inference. Start with none on the default 80 GB GPU.",
-          "default": "none",
+          "description": "Select offload strategy. 'text_encoder' (recommended) keeps 65GB VRAM free during denoising without slowing down the DiT.",
+          "default": "text_encoder",
           "advanced": true,
           "options": [
             {
-              "label": "Disabled",
-              "value": "none"
+              "label": "Text Encoder Offload (Recommended)",
+              "value": "text_encoder"
             },
             {
-              "label": "Model offload",
+              "label": "Full Model Offload (Lowest VRAM)",
               "value": "model"
             },
             {
-              "label": "Sequential offload",
+              "label": "Sequential Offload",
               "value": "sequential"
+            },
+            {
+              "label": "Disabled (Keeps all 33GB on GPU)",
+              "value": "none"
             }
           ]
         }

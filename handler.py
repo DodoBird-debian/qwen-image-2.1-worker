@@ -25,8 +25,7 @@ def make_handler(service):
             if isinstance(exc, torch.cuda.OutOfMemoryError):
                 logger.exception("CUDA memory exhausted")
                 return {
-                    "error": "CUDA out of memory. Reduce dimensions/reference images or enable "
-                    "CPU_OFFLOAD=model; use a larger GPU if necessary.",
+                    "error": "CUDA out of memory. Set CPU_OFFLOAD=text_encoder (or model), reduce dimensions or reference images.",
                     "refresh_worker": True,
                 }
             logger.exception("Inference failed")

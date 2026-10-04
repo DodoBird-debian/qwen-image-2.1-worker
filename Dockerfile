@@ -7,7 +7,12 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
     HF_HOME=/opt/huggingface \
-    TOKENIZERS_PARALLELISM=false
+    TOKENIZERS_PARALLELISM=false \
+    CUDA_DEVICE_SCHEDULE=2 \
+    OMP_NUM_THREADS=8 \
+    MKL_NUM_THREADS=8 \
+    OPENBLAS_NUM_THREADS=8 \
+    NUMEXPR_NUM_THREADS=8
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \

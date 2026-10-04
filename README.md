@@ -123,8 +123,9 @@ also decodes previously saved API results.
 | `MODEL_PATH` | Optional complete local Diffusers snapshot; bypasses downloads/revision selection |
 | `HF_HOME` | Automatic persistent-volume or container-cache path |
 | `HF_TOKEN` | Optional, handled by huggingface_hub |
-| `CPU_OFFLOAD` | `none`, `model`, or `sequential`; latter two trade speed for lower VRAM |
+| `CPU_OFFLOAD` | `text_encoder` (default), `none`, `model`, or `sequential`; `text_encoder` keeps 65GB VRAM free during denoising without slowing down the DiT |
 | `VAE_TILING` | `true`; reduces decoding memory at large resolutions |
+| `MEMORY_GUARD` | `true` (default); pre-flight checks VRAM requirement to reject oversize jobs cleanly without OOM |
 
 The worker uses BF16 and requires an Ampere-or-newer CUDA GPU. It keeps one model
 instance per process and serializes inference. CUDA OOM returns an actionable job
