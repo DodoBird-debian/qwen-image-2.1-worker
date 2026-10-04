@@ -6,7 +6,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
-    HF_HOME=/opt/huggingface \
     TOKENIZERS_PARALLELISM=false \
     CUDA_DEVICE_SCHEDULE=2 \
     OMP_NUM_THREADS=8 \
@@ -24,16 +23,7 @@ RUN python -m pip install --no-cache-dir -r /app/requirements.txt \
 COPY scripts/check_runtime.py /app/scripts/check_runtime.py
 RUN python /app/scripts/check_runtime.py
 COPY qwen_worker /app/qwen_worker
-COPY scripts/download_model.py /app/scripts/download_model.py
-
-# Download the pinned checkpoint into an image layer; no GPU is needed to build.
-# Keep this outside /runpod-volume so a mounted volume cannot hide the weights.
-RUN python /app/scripts/download_model.py
-
-# Runtime resolves the baked snapshot locally and never checks Hugging Face.
-ENV HF_HUB_OFFLINE=1 \
-    MODEL_PATH=/opt/huggingface/hub/models--Qwen--Qwen-Image-2.1/snapshots/790c92633540aa0cb11d9abf19eb46d861714758
-
+COPY scripts /app/scripts
 COPY handler.py /app/handler.py
 COPY examples /app/examples
 CMD ["python", "-u", "/app/handler.py"]

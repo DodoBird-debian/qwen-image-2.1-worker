@@ -15,16 +15,25 @@ def download_model(settings: Settings) -> str:
             raise ValueError("MODEL_PATH must contain a complete Diffusers model snapshot")
         return settings.model_path
 
-    # Check if weights are baked into the container image (prevents re-downloading if RunPod mounts a volume)
+    # 1. Check if model is in RunPod's volume cache (/runpod-volume)
+    runpod_vol = Path("/runpod-volume")
+    if runpod_vol.is_dir():
+        for candidate in runpod_vol.glob("**/model_index.json"):
+            logger.info("Found cached model in /runpod-volume: %s", candidate.parent)
+            return str(candidate.parent)
+
+    # 2. Check if weights are baked into the container image (/opt/huggingface)
     opt_hf = Path("/opt/huggingface")
     if opt_hf.is_dir():
         for candidate in opt_hf.glob("**/model_index.json"):
             logger.info("Found baked model in container: %s", candidate.parent)
             return str(candidate.parent)
 
+    # 3. Resolve/download via Hugging Face cache
     configure_cache()
     from huggingface_hub import snapshot_download
 
+    logger.info("Resolving model snapshot for %s (%s)...", settings.model_id, settings.model_revision)
     return snapshot_download(
         repo_id=settings.model_id,
         revision=settings.model_revision,
