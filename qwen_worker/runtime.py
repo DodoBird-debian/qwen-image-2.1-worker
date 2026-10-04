@@ -18,8 +18,13 @@ def download_model(settings: Settings) -> str:
     # 1. Check if model is in RunPod's volume cache (/runpod-volume)
     runpod_vol = Path("/runpod-volume")
     if runpod_vol.is_dir():
+        target_name = settings.model_id.split("/")[-1].lower()  # "qwen-image-2.1"
         for candidate in runpod_vol.glob("**/model_index.json"):
-            logger.info("Found cached model in /runpod-volume: %s", candidate.parent)
+            if target_name in str(candidate).lower():
+                logger.info("Found cached %s in /runpod-volume: %s", target_name, candidate.parent)
+                return str(candidate.parent)
+        for candidate in runpod_vol.glob("**/model_index.json"):
+            logger.info("Found model in /runpod-volume: %s", candidate.parent)
             return str(candidate.parent)
 
     # 2. Check if weights are baked into the container image (/opt/huggingface)
