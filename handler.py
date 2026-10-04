@@ -6,47 +6,53 @@ import json
 import logging
 from pathlib import Path
 
+import runpod
+import torch
+
 from qwen_worker.config import Settings
 from qwen_worker.requests import InputError
+from qwen_worker.runtime import load_service
 
 logger = logging.getLogger(__name__)
 
-
-def make_handler(service):
-    def handler(job):
-        try:
-            return service.handle(job)
-        except InputError as exc:
-            return {"error": str(exc)}
-        except Exception as exc:
-            # Recoverable validation errors never reset the loaded model. CUDA failures do.
-            import torch
-
-            if isinstance(exc, torch.cuda.OutOfMemoryError):
-                logger.exception("CUDA memory exhausted")
-                return {
-                    "error": "CUDA out of memory. Set CPU_OFFLOAD=text_encoder (or model), reduce dimensions or reference images.",
-                    "refresh_worker": True,
-                }
-            logger.exception("Inference failed")
-            return {"error": "Inference failed; inspect worker logs", "refresh_worker": True}
-
-    return handler
+_service = None
 
 
-def main():
+def get_service():
+    global _service
+    if _service is None:
+        _service = load_service(Settings.from_env())
+    return _service
+
+
+def handler(job):
+    service = get_service()
+    try:
+        return service.handle(job)
+    except InputError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        # Recoverable validation errors never reset the loaded model. CUDA failures do.
+        if isinstance(exc, torch.cuda.OutOfMemoryError):
+            logger.exception("CUDA memory exhausted")
+            return {
+                "error": "CUDA out of memory. Set CPU_OFFLOAD=text_encoder (or model), reduce dimensions or reference images.",
+                "refresh_worker": True,
+            }
+        logger.exception("Inference failed")
+        return {"error": "Inference failed; inspect worker logs", "refresh_worker": True}
+
+
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument("--local", type=Path, help="Run one input JSON on a CUDA GPU and exit")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
     args, sdk_args = parser.parse_known_args()
-    if args.local and sdk_args:
-        parser.error(f"Unrecognized local arguments: {' '.join(sdk_args)}")
-    from qwen_worker.runtime import load_service
 
-    service = load_service(Settings.from_env())
-    handler = make_handler(service)
     if args.local:
+        if sdk_args:
+            parser.error(f"Unrecognized local arguments: {' '.join(sdk_args)}")
         result = handler(json.loads(args.local.read_text(encoding="utf-8")))
         if "error" in result:
             raise SystemExit(result["error"])
@@ -59,11 +65,6 @@ def main():
         (args.output_dir / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         print(json.dumps(result, indent=2))
     else:
-        import runpod
-
-        # The service lock also protects against accidental future SDK concurrency changes.
+        get_service()
         runpod.serverless.start({"handler": handler})
 
-
-if __name__ == "__main__":
-    main()
