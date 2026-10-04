@@ -1,7 +1,7 @@
-# Qwen-Image-2.1 Runpod worker
-[![Runpod](https://api.runpod.io/badge/kodxana/qwen-image-2.1-worker)](https://console.runpod.io/hub/listing/kodxana/qwen-image-2.1-worker)
+# Qwen-Image-2.1 Runpod Worker v0.0.1.2
+[![Runpod](https://api.runpod.io/badge/DodoBird-debian/qwen-image-2.1-worker)](https://console.runpod.io/hub/listing/DodoBird-debian/qwen-image-2.1-worker)
 
-A queue-based Runpod Serverless worker for **Qwen/Qwen-Image-2.1**. It loads one BF16
+A queue-based Runpod Serverless worker for **Qwen/Qwen-Image-2.1** (v0.0.1.2). It loads one BF16
 pipeline before accepting jobs and reuses it for text-to-image generation, image
 editing with up to ten references, and transparent image generation.
 
@@ -137,14 +137,14 @@ input errors keep the model warm.
 Container dependency check:
 
 ```bash
-docker run --rm qwen-image-2.1-worker:0.1.0 python scripts/check_runtime.py
+docker run --rm qwen-image-2.1-worker:0.0.1.2 python scripts/check_runtime.py
 ```
 
 Real inference smoke test, on a Docker host with NVIDIA Container Toolkit:
 
 ```bash
 docker run --rm --gpus all -v qwen-cache:/cache -v "$PWD/outputs:/outputs" \
-  qwen-image-2.1-worker:0.1.0 python handler.py \
+  qwen-image-2.1-worker:0.0.1.2 python handler.py \
   --local examples/smoke.json --output-dir /outputs
 ```
 

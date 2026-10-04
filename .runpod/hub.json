@@ -1,6 +1,6 @@
 {
-  "title": "Qwen-Image-2.1",
-  "description": "Generate, edit, and create transparent images with Qwen-Image-2.1 using a native Diffusers queue worker.",
+  "title": "Qwen-Image-2.1 Worker v0.0.1.2",
+  "description": "Generate, edit, and create transparent images with Qwen-Image-2.1 using a native Diffusers queue worker (v0.0.1.2).",
   "type": "serverless",
   "category": "image",
   "config": {
