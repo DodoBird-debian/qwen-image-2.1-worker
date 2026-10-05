@@ -67,14 +67,14 @@ def estimate(
     
     # 1. Base sequential KV Cache (for 1 image)
     kv_cache = prefix * branches * KV_BYTES_PER_TOKEN if use_kv_cache else 0
-    activations = (prefix + target) * ACTIVATION_BYTES_PER_TOKEN
+    activations = (prefix + target) * branches * ACTIVATION_BYTES_PER_TOKEN
     overhead = FIXED_OVERHEAD_BYTES
     seq_total = kv_cache + activations + overhead
 
     # 2. Parallel Tensor Batching VRAM requirement (batch_size >= 2)
     # KV cache is shared across parallel queries via broadcast attention.
-    # Target latent tokens and DiT activation workspace scale with batch size.
-    parallel_activations = int((prefix + target * batch_size) * ACTIVATION_BYTES_PER_TOKEN * 1.2)
+    # Target latent tokens and DiT activation workspace scale with batch size and branches.
+    parallel_activations = int((prefix + target * batch_size) * branches * ACTIVATION_BYTES_PER_TOKEN * 1.2)
     parallel_overhead = int(FIXED_OVERHEAD_BYTES + max(0, batch_size - 1) * 0.5 * GIB)
     parallel_total = kv_cache + parallel_activations + parallel_overhead
 
