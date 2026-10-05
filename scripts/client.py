@@ -89,13 +89,13 @@ def main():
         if len(args.image) > 10:
             parser.error("At most 10 reference images are supported")
         sizes = [path.stat().st_size for path in args.image]
-        if sum(4 * ((size + 2) // 3) for size in sizes) > 8_000_000:
-            parser.error("Reference images exceed the worker's base64 input limit")
+        if sum(4 * ((size + 2) // 3) for size in sizes) > 10_000_000:
+            parser.error("Reference images exceed the 10 MB base64 upload limit")
         payload["input"]["images"] = [
             base64.b64encode(path.read_bytes()).decode("ascii") for path in args.image
         ]
-    if len(json.dumps(payload).encode()) > 9_000_000:
-        parser.error("Request exceeds 9000000 bytes")
+    if len(json.dumps(payload).encode()) > 10_400_000:
+        parser.error("Request exceeds 10MB RunPod gateway payload limit")
     endpoint = f"{API_ROOT}/{args.endpoint_id}"
     result = api_call(f"{endpoint}/run", key, payload)
     job_id = result.get("id")

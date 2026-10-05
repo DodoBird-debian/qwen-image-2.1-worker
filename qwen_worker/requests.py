@@ -15,7 +15,7 @@ ASPECT_RATIOS = {
     "9:16": (1536, 2752),
 }
 MAX_SEED = 2**63 - 1
-MAX_INPUT_CHARS = 8_000_000
+MAX_INPUT_CHARS = 10_000_000
 
 
 class InputError(ValueError):
@@ -95,7 +95,7 @@ class GenerationRequest:
         if any(not isinstance(item, str) or not item for item in images):
             raise InputError("Every images entry must be a non-empty base64 string")
         if sum(map(len, images)) > MAX_INPUT_CHARS:
-            raise InputError("Combined base64 reference images exceed 8000000 characters")
+            raise InputError(f"Combined base64 reference images exceed {MAX_INPUT_CHARS} characters (10MB)")
         transparent = data.get("transparent", False)
         if type(transparent) is not bool:
             raise InputError("transparent must be a boolean")

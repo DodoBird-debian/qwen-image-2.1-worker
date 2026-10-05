@@ -33,10 +33,14 @@ def reference_tokens(width: int, height: int, output_resolution: int) -> int:
 
 @dataclass(frozen=True)
 class MemoryEstimate:
+    text_tokens: int
+    image_tokens: int
     prefix_tokens: int
     target_tokens: int
     branches: int
     kv_cache_bytes: int
+    activation_bytes: int
+    overhead_bytes: int
     total_bytes: int
 
 
@@ -51,15 +55,22 @@ def estimate(
 ) -> MemoryEstimate:
     # Upper-bound text tokens; prompts are tiny next to image tokens anyway.
     text_tokens = prompt_chars // 2 + 128
-    prefix = text_tokens + sum(reference_tokens(w, h, output_resolution) for w, h in reference_sizes)
+    image_tokens = sum(reference_tokens(w, h, output_resolution) for w, h in reference_sizes)
+    prefix = text_tokens + image_tokens
     target = (width // PIXELS_PER_TOKEN_SIDE) * (height // PIXELS_PER_TOKEN_SIDE)
     branches = 2 if true_cfg else 1
     kv_cache = prefix * branches * KV_BYTES_PER_TOKEN if use_kv_cache else 0
     activations = (prefix + target) * ACTIVATION_BYTES_PER_TOKEN
+    overhead = FIXED_OVERHEAD_BYTES
     return MemoryEstimate(
+        text_tokens=text_tokens,
+        image_tokens=image_tokens,
         prefix_tokens=prefix,
         target_tokens=target,
         branches=branches,
         kv_cache_bytes=kv_cache,
-        total_bytes=kv_cache + activations + FIXED_OVERHEAD_BYTES,
+        activation_bytes=activations,
+        overhead_bytes=overhead,
+        total_bytes=kv_cache + activations + overhead,
     )
+
