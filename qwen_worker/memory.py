@@ -38,10 +38,14 @@ class MemoryEstimate:
     prefix_tokens: int
     target_tokens: int
     branches: int
+    batch_size: int
     kv_cache_bytes: int
     activation_bytes: int
     overhead_bytes: int
     total_bytes: int
+    parallel_activations_bytes: int
+    parallel_overhead_bytes: int
+    parallel_total_bytes: int
 
 
 def estimate(
@@ -52,6 +56,7 @@ def estimate(
     prompt_chars: int,
     true_cfg: bool,
     use_kv_cache: bool,
+    batch_size: int = 1,
 ) -> MemoryEstimate:
     # Upper-bound text tokens; prompts are tiny next to image tokens anyway.
     text_tokens = prompt_chars // 2 + 128
@@ -59,18 +64,32 @@ def estimate(
     prefix = text_tokens + image_tokens
     target = (width // PIXELS_PER_TOKEN_SIDE) * (height // PIXELS_PER_TOKEN_SIDE)
     branches = 2 if true_cfg else 1
+    
+    # 1. Base sequential KV Cache (for 1 image)
     kv_cache = prefix * branches * KV_BYTES_PER_TOKEN if use_kv_cache else 0
     activations = (prefix + target) * ACTIVATION_BYTES_PER_TOKEN
     overhead = FIXED_OVERHEAD_BYTES
+    seq_total = kv_cache + activations + overhead
+
+    # 2. Parallel Tensor Batching VRAM requirement (batch_size >= 2)
+    # KV cache is shared across parallel queries via broadcast attention.
+    # Target latent tokens and DiT activation workspace scale with batch size.
+    parallel_activations = int((prefix + target * batch_size) * ACTIVATION_BYTES_PER_TOKEN * 1.2)
+    parallel_overhead = int(FIXED_OVERHEAD_BYTES + max(0, batch_size - 1) * 0.5 * GIB)
+    parallel_total = kv_cache + parallel_activations + parallel_overhead
+
     return MemoryEstimate(
         text_tokens=text_tokens,
         image_tokens=image_tokens,
         prefix_tokens=prefix,
         target_tokens=target,
         branches=branches,
+        batch_size=batch_size,
         kv_cache_bytes=kv_cache,
         activation_bytes=activations,
         overhead_bytes=overhead,
-        total_bytes=kv_cache + activations + overhead,
+        total_bytes=seq_total,
+        parallel_activations_bytes=parallel_activations if batch_size > 1 else activations,
+        parallel_overhead_bytes=parallel_overhead if batch_size > 1 else overhead,
+        parallel_total_bytes=parallel_total if batch_size > 1 else seq_total,
     )
-

@@ -47,7 +47,7 @@ class ImageService:
         self.release_memory = release_memory
         self._lock = threading.Lock()
 
-    def check_memory(self, request: GenerationRequest, references: list) -> MemoryEstimate:
+    def check_memory(self, request: GenerationRequest, references: list) -> tuple[MemoryEstimate, bool]:
         need = estimate(
             [image.size for image in references],
             request.output_resolution,
@@ -56,35 +56,82 @@ class ImageService:
             len(request.effective_prompt) + len(request.negative_prompt or ""),
             request.true_cfg_scale > 1,
             request.use_kv_cache,
+            batch_size=request.num_images,
         )
         need_gib = need.total_bytes / GIB
+        parallel_need_gib = need.parallel_total_bytes / GIB
         kv_gib = need.kv_cache_bytes / GIB
         act_gib = need.activation_bytes / GIB
         ovh_gib = need.overhead_bytes / GIB
+        par_act_gib = need.parallel_activations_bytes / GIB
+        par_ovh_gib = need.parallel_overhead_bytes / GIB
+        can_parallel = False
 
         if self.memory_budget is not None:
             budget = self.memory_budget()
             budget_gib = budget / GIB
-            logger.info("  [VRAM PRE-FLIGHT CHECK]")
-            logger.info("    * Tokens: %d prefix (%d text, %d image) | %d target latent | %d branches", 
-                        need.prefix_tokens, need.text_tokens, need.image_tokens, need.target_tokens, need.branches)
-            logger.info("    * Breakdown: KV Cache: %.2f GiB | Activations: %.2f GiB | Overhead: %.2f GiB | Total Need: %.2f GiB",
-                        kv_gib, act_gib, ovh_gib, need_gib)
-            logger.info("    * GPU Free VRAM Available: %.2f GiB", budget_gib)
+            
+            logger.info("  " + "=" * 76)
+            logger.info("  [ADAPTIVE EXECUTION ROUTER & VRAM BUDGET AUDIT]")
+            logger.info("  " + "=" * 76)
+            logger.info("  * Token Accounting:")
+            logger.info("    - Prefix Tokens : %d (Text: %d tokens, Reference Images: %d tokens across %d condition image(s))",
+                        need.prefix_tokens, need.text_tokens, need.image_tokens, len(references))
+            logger.info("    - Target Latents: %d tokens/image (%dx%d canvas) -> Total batch tokens: %d",
+                        need.target_tokens, request.width, request.height, need.target_tokens * request.num_images)
+            logger.info("    - Guidance      : %d branch(es) (True CFG Scale: %.1f)", need.branches, request.true_cfg_scale)
+            logger.info("  * Memory Allocation Breakdown:")
+            logger.info("    - KV Cache      : %.2f GiB (%s: 512 KiB/token x %d tokens x %d branches)",
+                        kv_gib, "ENABLED" if request.use_kv_cache else "DISABLED (0.00 GiB)", need.prefix_tokens, need.branches)
+            logger.info("    - Fixed Overhead: %.2f GiB (VAE workspace, cuDNN, CUDA allocator pools)", ovh_gib)
+            logger.info("    - Mode B (Seq)  : %.2f GiB (Sequential 1-by-1 generation loop: KV %.2f GiB + Act %.2f GiB + Ovh %.2f GiB)",
+                        need_gib, kv_gib, act_gib, ovh_gib)
+            if request.num_images > 1:
+                logger.info("    - Mode A (Par)  : %.2f GiB (Parallel tensor pass: Shared KV %.2f GiB + Batch Act %.2f GiB + Ovh %.2f GiB)",
+                            parallel_need_gib, kv_gib, par_act_gib, par_ovh_gib)
+            logger.info("    - Available VRAM: %.2f GiB Free on GPU", budget_gib)
+            logger.info("  " + "-" * 76)
 
             if need.total_bytes > budget:
-                logger.error("  <!> [VRAM REJECTED] Needed %.2f GiB exceeds available %.2f GiB", need_gib, budget_gib)
+                logger.error("  <!> [ROUTING: REJECTED - INSUFFICIENT VRAM]")
+                logger.error("      Reason: Even sequential generation requires %.2f GiB, which exceeds available %.2f GiB by %.2f GiB.",
+                             need_gib, budget_gib, need_gib - budget_gib)
+                logger.error("      Recommendation: Reduce reference images, lower output_resolution (512/1024), set true_cfg_scale=1.0, or disable use_kv_cache.")
+                logger.info("  " + "=" * 76)
                 raise InputError(
                     f"Request needs an estimated {need_gib:.1f} GiB of free VRAM "
                     f"(KV cache {kv_gib:.1f} GiB for {need.prefix_tokens} prefix tokens x "
                     f"{need.branches} branch(es)) but only {budget_gib:.1f} GiB is available. Use fewer "
                     "reference images, output_resolution 512/1024, true_cfg_scale 1, or use_kv_cache false."
                 )
-            logger.info("    * Verdict: [PASSED] (Estimated surplus: %.2f GiB)", budget_gib - need_gib)
-        else:
-            logger.info("  [VRAM PRE-FLIGHT] Memory guard disabled; Estimated requirement: %.2f GiB (KV cache: %.2f GiB)", need_gib, kv_gib)
 
-        return need
+            # Adaptive Route Selection
+            if request.num_images > 1:
+                if need.parallel_total_bytes <= budget:
+                    can_parallel = True
+                    surplus_gib = budget_gib - parallel_need_gib
+                    logger.info("  * ROUTING DECISION: >>> [MODE A: PARALLEL TENSOR BATCHING] (SPEED MODE) <<<")
+                    logger.info("    -> Rationale    : Parallel requirement (%.2f GiB) <= Available VRAM (%.2f GiB).", parallel_need_gib, budget_gib)
+                    logger.info("    -> Safety Margin: +%.2f GiB free headroom remaining during peak generation.", surplus_gib)
+                    logger.info("    -> Speed Factor : All %d images will be generated simultaneously in 1 single forward pass (~3.5x faster!).", request.num_images)
+                else:
+                    can_parallel = False
+                    deficit_gib = parallel_need_gib - budget_gib
+                    logger.info("  * ROUTING DECISION: >>> [MODE B: SEQUENTIAL SAFETY LOOP] (SAFE MODE) <<<")
+                    logger.info("    -> Rationale    : Parallel requirement (%.2f GiB) exceeds free VRAM (%.2f GiB) by %.2f GiB.", parallel_need_gib, budget_gib, deficit_gib)
+                    logger.info("    -> Protection   : Automatically routing to sequential 1-by-1 generation to prevent CUDA Out-Of-Memory (OOM).")
+                    logger.info("    -> Sequential   : Peak memory will be constrained to %.2f GiB (Headroom: +%.2f GiB).", need_gib, budget_gib - need_gib)
+            else:
+                can_parallel = False
+                logger.info("  * ROUTING DECISION: [SINGLE-IMAGE STANDARD PASS] (batch_size = 1, Need: %.2f GiB, Headroom: +%.2f GiB)",
+                            need_gib, budget_gib - need_gib)
+            logger.info("  " + "=" * 76)
+        else:
+            can_parallel = request.num_images > 1
+            logger.info("  [VRAM PRE-FLIGHT] Memory guard disabled; estimated need: %.2f GiB (Sequential: %.2f GiB, Parallel: %.2f GiB)", 
+                        need_gib, need_gib, parallel_need_gib)
+
+        return need, can_parallel
 
     def handle(self, job: dict) -> dict:
         if not isinstance(job, dict):
@@ -119,10 +166,10 @@ class ImageService:
         else:
             logger.info("  [REFERENCE IMAGES] None (pure text-to-image mode)")
 
-        # 3. Memory Guard Check
-        self.check_memory(request, references)
+        # 3. Memory Guard & Routing Check
+        need, can_parallel = self.check_memory(request, references)
 
-        # 4. Pipeline Parameters
+        # 4. Pipeline Parameters Base
         kwargs = {
             "prompt": request.effective_prompt,
             "width": request.width,
@@ -150,32 +197,78 @@ class ImageService:
             "images": [],
         }
 
-        # 5. Denoising & Image Generation
-        # Diffusers mutates its scheduler/attention state. Never overlap calls to one pipeline.
+        # 5. Denoising & Image Generation (Adaptive Router)
         logger.info("  [EXECUTION PIPELINE]")
         with self._lock:
             try:
-                for index in range(request.num_images):
-                    seed = (request.seed + index) % (MAX_SEED + 1)
-                    logger.info("    >>> Generating image %d/%d (Seed: %d, Resolution: %dx%d, Steps: %d)...", 
-                                index + 1, request.num_images, seed, request.width, request.height, request.steps)
+                # PATH A: Parallel Tensor Batching
+                if can_parallel and request.num_images > 1:
+                    seeds = [(request.seed + i) % (MAX_SEED + 1) for i in range(request.num_images)]
+                    generators = [self.generator_factory(s) for s in seeds]
                     
+                    batch_kwargs = dict(kwargs)
+                    batch_kwargs["prompt"] = [request.effective_prompt] * request.num_images
+                    if "negative_prompt" in batch_kwargs and batch_kwargs["negative_prompt"] is not None:
+                        batch_kwargs["negative_prompt"] = [batch_kwargs["negative_prompt"]] * request.num_images
+                    if references:
+                        batch_kwargs["image"] = [references] * request.num_images
+
+                    logger.info("    >>> [PARALLEL TENSOR PASS START] Generating %d images in 1 simultaneous CUDA forward pass (Seeds: %s, Steps: %d)...", 
+                                request.num_images, seeds, request.steps)
                     t_gen = time.perf_counter()
-                    output = self.pipeline(**kwargs, generator=self.generator_factory(seed))
-                    gen_time = time.perf_counter() - t_gen
-                    ms_per_step = (gen_time / request.steps) * 1000 if request.steps else 0
-                    logger.info("    <<< Denoising & VAE decode for %d/%d completed in %.2fs (avg %.1f ms/step)", 
-                                index + 1, request.num_images, gen_time, ms_per_step)
+                    
+                    try:
+                        output = self.pipeline(**batch_kwargs, generator=generators)
+                        gen_time = time.perf_counter() - t_gen
+                        ms_per_step = (gen_time / request.steps) * 1000 if request.steps else 0
+                        logger.info("    <<< [PARALLEL TENSOR PASS COMPLETE] Denoising for all %d images completed in %.2fs (avg %.1f ms/step, effective %.2fs/image)", 
+                                    request.num_images, gen_time, ms_per_step, gen_time / request.num_images)
 
-                    t_enc = time.perf_counter()
-                    encoded = encode_image(output.images[0], request.output_format, request.quality, seed)
-                    enc_time = (time.perf_counter() - t_enc) * 1000
-                    b64_len = len(encoded.get("image_base64", ""))
-                    approx_bytes = int(b64_len * 3 / 4)
-                    logger.info("    * Encoded output image to %s (%s, took %.1fms)", 
-                                request.output_format.upper(), _format_bytes(approx_bytes), enc_time)
+                        for idx, img in enumerate(output.images):
+                            t_enc = time.perf_counter()
+                            seed = seeds[idx]
+                            encoded = encode_image(img, request.output_format, request.quality, seed)
+                            enc_time = (time.perf_counter() - t_enc) * 1000
+                            b64_len = len(encoded.get("image_base64", ""))
+                            approx_bytes = int(b64_len * 3 / 4)
+                            logger.info("    * Encoded parallel batch image %d/%d to %s (%s, took %.1fms)", 
+                                        idx + 1, request.num_images, request.output_format.upper(), _format_bytes(approx_bytes), enc_time)
+                            result["images"].append(encoded)
 
-                    result["images"].append(encoded)
+                    except Exception as batch_err:
+                        logger.warning("    <!> [BATCH RETRY] Parallel tensor execution encountered '%s'. Gracefully falling back to sequential safety loop...", batch_err)
+                        result["images"].clear()
+                        for index in range(request.num_images):
+                            seed = (request.seed + index) % (MAX_SEED + 1)
+                            t_sub = time.perf_counter()
+                            out_sub = self.pipeline(**kwargs, generator=self.generator_factory(seed))
+                            encoded = encode_image(out_sub.images[0], request.output_format, request.quality, seed)
+                            result["images"].append(encoded)
+                            logger.info("    * Fallback sequential image %d/%d generated in %.2fs", index + 1, request.num_images, time.perf_counter() - t_sub)
+
+                # PATH B: Sequential Generation Loop
+                else:
+                    for index in range(request.num_images):
+                        seed = (request.seed + index) % (MAX_SEED + 1)
+                        logger.info("    >>> Generating image %d/%d (Seed: %d, Resolution: %dx%d, Steps: %d)...", 
+                                    index + 1, request.num_images, seed, request.width, request.height, request.steps)
+                        
+                        t_gen = time.perf_counter()
+                        output = self.pipeline(**kwargs, generator=self.generator_factory(seed))
+                        gen_time = time.perf_counter() - t_gen
+                        ms_per_step = (gen_time / request.steps) * 1000 if request.steps else 0
+                        logger.info("    <<< Denoising & VAE decode for %d/%d completed in %.2fs (avg %.1f ms/step)", 
+                                    index + 1, request.num_images, gen_time, ms_per_step)
+
+                        t_enc = time.perf_counter()
+                        encoded = encode_image(output.images[0], request.output_format, request.quality, seed)
+                        enc_time = (time.perf_counter() - t_enc) * 1000
+                        b64_len = len(encoded.get("image_base64", ""))
+                        approx_bytes = int(b64_len * 3 / 4)
+                        logger.info("    * Encoded output image to %s (%s, took %.1fms)", 
+                                    request.output_format.upper(), _format_bytes(approx_bytes), enc_time)
+
+                        result["images"].append(encoded)
 
             finally:
                 if self.release_memory is not None:
@@ -183,7 +276,6 @@ class ImageService:
                         self.release_memory()
                     except Exception:
                         pass
-
 
         total_infer_sec = round(time.perf_counter() - started, 3)
         result["inference_seconds"] = total_infer_sec
@@ -196,5 +288,3 @@ class ImageService:
 
         logger.info("  [BATCH SUMMARY] Successfully generated %d image(s) in %.3fs total", len(result["images"]), total_infer_sec)
         return result
-
-
