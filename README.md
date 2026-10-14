@@ -68,8 +68,8 @@ model capability prompted through text; the worker does not synthesize an alpha 
 | `aspect_ratio` | Alternative to dimensions: 1:1, 4:3, 3:4, 3:2, 2:3, 16:9, 9:16; uses Qwen's native approximately 2K sizes |
 | `num_inference_steps` | 40; integer 1–100 |
 | `seed` | Random if omitted or -1; otherwise integer 0 to 2^63−1 |
-| `num_images` | 1; integer 1–4; generated sequentially with consecutive seeds |
-| `images` | Empty; at most 10 references, combined base64 ≤8,000,000 characters |
+| `num_images` | 1; integer 1–4; consecutive seeds, parallel only when phase estimates admit the batch |
+| `images` | Empty; at most 10 references, combined base64 ≤10,000,000 characters; the entire `/run` JSON must also fit 10,000,000 bytes |
 | `transparent` | false |
 | `output_format` | png; png, webp, or jpeg |
 | `quality` | 95; integer 1–100, used by JPEG and non-alpha WebP |
@@ -123,18 +123,28 @@ also decodes previously saved API results.
 | `MODEL_PATH` | Optional complete local Diffusers snapshot; bypasses downloads/revision selection |
 | `HF_HOME` | Automatic persistent-volume or container-cache path |
 | `HF_TOKEN` | Optional, handled by huggingface_hub |
-| `CPU_OFFLOAD` | `text_encoder` (default for ≥32GB GPUs), `model` (recommended for 24GB GPUs such as L4/3090/4090), `none`, or `sequential` |
+| `CPU_OFFLOAD` | `text_encoder` (default), `model`, `none`, or `sequential`; select from measured phase peaks on the target GPU |
 | `VAE_TILING` | `true`; reduces decoding memory at large resolutions |
-| `MEMORY_GUARD` | `true` (default); pre-flight checks VRAM requirement to reject oversize jobs cleanly without OOM |
+| `MEMORY_GUARD` | `true` (default); conservative phase estimates reject oversize jobs; does not guarantee freedom from OOM |
 
-## Hardware Verification & Tested GPUs
+## Hardware and verification status
 
-| GPU Hardware | Usable VRAM | Recommended `CPU_OFFLOAD` | Verification Status | Performance / Notes |
-|---|---|---|---|---|
-| **NVIDIA A100-SXM4** | 80 GB | `text_encoder` | **VERIFIED** | ~10.3s (1024x1024, 4 steps), 64+ GB free headroom |
-| **NVIDIA RTX 5090** | 32 GB | `text_encoder` or `model` | **VERIFIED** | ~26.4s (1024x1024, 22 steps), Blackwell Compute 12.0 verified |
-| **NVIDIA L4** | 24 GB (22.04 GiB) | `model` | **VERIFIED** | 100% stable with 1024px reference images, zero OOM |
-| **RTX 3090 / 4090** | 24 GB | `model` | **VERIFIED** | Seamless multi-modal generation with sub-module offloading |
+The Runpod listing targets one 80 GB Ampere GPU. This repository does not contain
+reproducible evidence for the earlier GPU performance and stability claims, so
+those claims have been removed. The current implementation has CPU regression
+coverage; image quality, throughput and memory peaks need validation on the
+deployment GPU. Smaller GPUs may require `model` or `sequential` offload and
+smaller requests. The guard intentionally reserves whole component weights for
+sequential offload until its submodule peaks have been measured.
+
+Parallel KV storage grows with both image count and CFG branches. Sequential
+outputs reuse prompt embeddings, image layout masks and deterministic reference
+latents within the job; random target noise and denoising caches remain independent.
+The encoder computes only the final unused language-logit position and disables
+its autoregressive cache. VAE slicing bounds batch decode work per image.
+
+Checkpoint discovery accepts the configured revision only, or a complete explicit
+`MODEL_PATH`. An unrelated or incomplete cached model cannot silently satisfy it.
 
 The worker uses BF16 and requires an Ampere-or-newer CUDA GPU. It keeps one model
 instance per process and serializes inference. CUDA OOM returns an actionable job

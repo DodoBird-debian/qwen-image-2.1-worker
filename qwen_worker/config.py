@@ -23,11 +23,13 @@ class Settings:
     model_id: str = MODEL_ID
     model_revision: str = MODEL_REVISION
     model_path: str | None = None
-    # The ~17.5 GB Qwen3-VL text encoder only runs once per image, so by default it lives in pinned host
-    # RAM and is copied to the GPU just for prompt encoding. The transformer and VAE stay resident.
+    # The encoder lives in ordinary CPU memory between conditioning passes and
+    # is staged to GPU on a job's conditioning cache miss. Transformer and VAE
+    # stay resident; this is a large-GPU policy, not automatic device selection.
     offload: str = "text_encoder"
     vae_tiling: bool = True
-    # Reject requests whose estimated VRAM need exceeds what is free, instead of OOMing mid-generation.
+    # Reject clearly oversized requests using phase estimates. Kernel workspace
+    # and allocator peaks vary by GPU, so this cannot guarantee freedom from OOM.
     memory_guard: bool = True
     max_output_bytes: int = 8_000_000
 

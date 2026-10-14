@@ -6,6 +6,7 @@
 !scripts/
 !scripts/check_runtime.py
 !scripts/download_model.py
+!scripts/client.py
 !examples/
 !examples/*.json
 

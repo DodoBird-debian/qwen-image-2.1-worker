@@ -11,10 +11,13 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 API_ROOT = "https://api.runpod.ai/v2"
+MAX_RUN_REQUEST_BYTES = 10_000_000
 
 
 def api_call(url: str, key: str, body: dict | None = None) -> dict:
-    payload = json.dumps(body).encode() if body is not None else None
+    payload = json.dumps(body).encode("utf-8") if body is not None else None
+    if payload is not None and url.rstrip("/").endswith("/run") and len(payload) > MAX_RUN_REQUEST_BYTES:
+        raise ValueError("Request exceeds the 10,000,000-byte Runpod /run payload limit")
     request = Request(
         url,
         data=payload,
@@ -94,8 +97,8 @@ def main():
         payload["input"]["images"] = [
             base64.b64encode(path.read_bytes()).decode("ascii") for path in args.image
         ]
-    if len(json.dumps(payload).encode()) > 10_400_000:
-        parser.error("Request exceeds 10MB RunPod gateway payload limit")
+    if len(json.dumps(payload).encode("utf-8")) > MAX_RUN_REQUEST_BYTES:
+        parser.error("Request exceeds the 10,000,000-byte Runpod /run payload limit")
     endpoint = f"{API_ROOT}/{args.endpoint_id}"
     result = api_call(f"{endpoint}/run", key, payload)
     job_id = result.get("id")

@@ -21,8 +21,8 @@ RUN python -m pip install --no-cache-dir -r /app/requirements.txt \
     && python -m pip check
 
 COPY scripts/check_runtime.py /app/scripts/check_runtime.py
-RUN python /app/scripts/check_runtime.py
 COPY qwen_worker /app/qwen_worker
+RUN python /app/scripts/check_runtime.py
 COPY scripts /app/scripts
 COPY handler.py /app/handler.py
 COPY examples /app/examples

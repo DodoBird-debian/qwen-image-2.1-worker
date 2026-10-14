@@ -29,7 +29,7 @@
         "input": {
           "name": "CPU offloading",
           "type": "string",
-          "description": "Select offload strategy. 'text_encoder' (recommended) keeps 65GB VRAM free during denoising without slowing down the DiT.",
+          "description": "Select offload strategy. 'text_encoder' retains the DiT and VAE on GPU; encoder weights also need space during conditioning. Profile the chosen GPU and request sizes.",
           "default": "text_encoder",
           "advanced": true,
           "options": [
@@ -38,7 +38,7 @@
               "value": "text_encoder"
             },
             {
-              "label": "Full Model Offload (Lowest VRAM)",
+              "label": "Whole Model Offload",
               "value": "model"
             },
             {
@@ -46,7 +46,7 @@
               "value": "sequential"
             },
             {
-              "label": "Disabled (Keeps all 33GB on GPU)",
+              "label": "Disabled (All weights on GPU)",
               "value": "none"
             }
           ]

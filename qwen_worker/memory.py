@@ -1,28 +1,21 @@
-"""Pure-Python VRAM estimates so oversized requests fail fast instead of OOMing the worker.
+"""Conservative admission heuristics for the pinned BF16 Qwen-Image 2.1 model.
 
-The dominant per-request cost is the prefix KV cache: every text and condition-image token keeps a BF16 key
-and value in each of the transformer's 32 blocks for the whole denoising loop, once per guidance branch.
-That is 512 KiB per token, so ten 1024px references (~41k tokens) pin ~20 GiB, and the same ten references
-at output_resolution=2048 (~164k tokens) would need ~80 GiB before any activations.
+Weights are budgeted separately by runtime placement. KV storage is calculated
+from the architecture; activation/workspace allowances require GPU calibration.
+Admission is not a guarantee against allocator or kernel workspace OOMs.
 """
 
 import math
 from dataclasses import dataclass
 
 GIB = 1024**3
-
-# Qwen-Image-2.1 transformer: 32 blocks x (K + V) x 4096 channels x 2 bytes (BF16).
 KV_BYTES_PER_TOKEN = 32 * 2 * 4096 * 2
-# Transient prefill activations per token (residual, modulated input, FP32 RoPE copies, 3x SwiGLU). Conservative.
 ACTIVATION_BYTES_PER_TOKEN = 16 * 4096 * 2
-# VAE tiles, cuBLAS/cuDNN workspaces and allocator slack.
 FIXED_OVERHEAD_BYTES = 3 * GIB
-# One latent token covers a 16x16 pixel tile.
 PIXELS_PER_TOKEN_SIDE = 16
 
 
 def reference_tokens(width: int, height: int, output_resolution: int) -> int:
-    """Latent tokens one condition image adds, mirroring the pipeline's `calculate_dimensions`."""
     ratio = width / height
     target_width = math.sqrt(output_resolution * output_resolution * ratio)
     target_height = target_width / ratio
@@ -31,21 +24,33 @@ def reference_tokens(width: int, height: int, output_resolution: int) -> int:
     return (target_width // PIXELS_PER_TOKEN_SIDE) * (target_height // PIXELS_PER_TOKEN_SIDE)
 
 
+def text_token_bound(text: str, reference_count: int = 0) -> int:
+    # Byte-level tokenization needs at most one token per UTF-8 byte of ordinary
+    # text. Reserve template/special tokens and per-reference labels separately.
+    return len(text.encode("utf-8")) + 128 + 16 * reference_count
+
+
 @dataclass(frozen=True)
 class MemoryEstimate:
     text_tokens: int
+    negative_text_tokens: int
     image_tokens: int
     prefix_tokens: int
+    negative_prefix_tokens: int
     target_tokens: int
     branches: int
     batch_size: int
     kv_cache_bytes: int
+    parallel_kv_cache_bytes: int
     activation_bytes: int
     overhead_bytes: int
     total_bytes: int
     parallel_activations_bytes: int
     parallel_overhead_bytes: int
     parallel_total_bytes: int
+    conditioning_bytes: int
+    decoding_bytes: int
+    parallel_decoding_bytes: int
 
 
 def estimate(
@@ -57,39 +62,49 @@ def estimate(
     true_cfg: bool,
     use_kv_cache: bool,
     batch_size: int = 1,
+    *,
+    positive_text_tokens: int | None = None,
+    negative_text_tokens: int | None = None,
 ) -> MemoryEstimate:
-    # Upper-bound text tokens; prompts are tiny next to image tokens anyway.
-    text_tokens = prompt_chars // 2 + 128
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    # Legacy callers provide character counts; use the maximum UTF-8 width.
+    # The service supplies a tighter byte-based bound for each branch.
+    text_tokens = positive_text_tokens if positive_text_tokens is not None else 4 * prompt_chars + 128
+    neg_text = (negative_text_tokens if negative_text_tokens is not None else text_tokens) if true_cfg else 0
     image_tokens = sum(reference_tokens(w, h, output_resolution) for w, h in reference_sizes)
     prefix = text_tokens + image_tokens
+    neg_prefix = neg_text + image_tokens if true_cfg else 0
+    prefix_sum = prefix + neg_prefix
     target = (width // PIXELS_PER_TOKEN_SIDE) * (height // PIXELS_PER_TOKEN_SIDE)
     branches = 2 if true_cfg else 1
-    
-    # 1. Base sequential KV Cache (for 1 image)
-    kv_cache = prefix * branches * KV_BYTES_PER_TOKEN if use_kv_cache else 0
-    activations = (prefix + target) * branches * ACTIVATION_BYTES_PER_TOKEN
+
+    kv_cache = prefix_sum * KV_BYTES_PER_TOKEN if use_kv_cache else 0
+    activations = (prefix_sum + target * branches) * ACTIVATION_BYTES_PER_TOKEN
     overhead = FIXED_OVERHEAD_BYTES
     seq_total = kv_cache + activations + overhead
+    # Every output has its own physical prefix K/V tensors. Reference and target
+    # activations both scale with batch size in the pinned transformer.
+    parallel_kv = kv_cache * batch_size
+    parallel_activations = activations * batch_size
+    parallel_overhead = overhead + max(0, batch_size - 1) * GIB // 2
+    parallel_total = parallel_kv + parallel_activations + parallel_overhead
 
-    # 2. Parallel Tensor Batching VRAM requirement (batch_size >= 2)
-    # KV cache is shared across parallel queries via broadcast attention.
-    # Target latent tokens and DiT activation workspace scale with batch size and branches.
-    parallel_activations = int((prefix + target * batch_size) * branches * ACTIVATION_BYTES_PER_TOKEN * 1.2)
-    parallel_overhead = int(FIXED_OVERHEAD_BYTES + max(0, batch_size - 1) * 0.5 * GIB)
-    parallel_total = kv_cache + parallel_activations + parallel_overhead
-
+    # Encoder runs once per prompt branch, even for a parallel output batch.
+    # Upstream still requests all hidden states; include retained layers plus
+    # temporary vision/language workspaces. Latent image tokens deliberately
+    # overestimate the vision-token count. This is an uncalibrated allowance.
+    conditioning = max(prefix, neg_prefix) * 64 * 4096 * 2 + overhead
+    # Condition KV remains live during VAE decode in upstream __call__.
+    pixels_bytes = width * height * 4 * 4
     return MemoryEstimate(
-        text_tokens=text_tokens,
-        image_tokens=image_tokens,
-        prefix_tokens=prefix,
-        target_tokens=target,
-        branches=branches,
-        batch_size=batch_size,
-        kv_cache_bytes=kv_cache,
-        activation_bytes=activations,
-        overhead_bytes=overhead,
-        total_bytes=seq_total,
-        parallel_activations_bytes=parallel_activations if batch_size > 1 else activations,
-        parallel_overhead_bytes=parallel_overhead if batch_size > 1 else overhead,
-        parallel_total_bytes=parallel_total if batch_size > 1 else seq_total,
+        text_tokens=text_tokens, negative_text_tokens=neg_text,
+        image_tokens=image_tokens, prefix_tokens=prefix, negative_prefix_tokens=neg_prefix,
+        target_tokens=target, branches=branches, batch_size=batch_size,
+        kv_cache_bytes=kv_cache, parallel_kv_cache_bytes=parallel_kv,
+        activation_bytes=activations, overhead_bytes=overhead, total_bytes=seq_total,
+        parallel_activations_bytes=parallel_activations,
+        parallel_overhead_bytes=parallel_overhead, parallel_total_bytes=parallel_total,
+        conditioning_bytes=conditioning, decoding_bytes=seq_total + pixels_bytes,
+        parallel_decoding_bytes=parallel_total + pixels_bytes * batch_size,
     )

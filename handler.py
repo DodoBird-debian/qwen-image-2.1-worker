@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -47,15 +48,18 @@ from qwen_worker.requests import InputError
 from qwen_worker.runtime import load_service
 
 _service = None
+_service_lock = threading.Lock()
 
 
 def get_service():
     global _service
     if _service is None:
-        logger.info("[INIT] Initializing Qwen-Image-2.1 service runtime...")
-        t0 = time.perf_counter()
-        _service = load_service(Settings.from_env())
-        logger.info("[INIT] Service initialization completed in %.2fs. Listening for RunPod serverless jobs.", time.perf_counter() - t0)
+        with _service_lock:
+            if _service is None:
+                logger.info("[INIT] Initializing Qwen-Image-2.1 service runtime...")
+                t0 = time.perf_counter()
+                _service = load_service(Settings.from_env())
+                logger.info("[INIT] Service initialization completed in %.2fs. Listening for RunPod serverless jobs.", time.perf_counter() - t0)
     return _service
 
 
