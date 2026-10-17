@@ -43,9 +43,12 @@ def decode_images(values: tuple[str, ...]) -> list[Image.Image]:
                     oriented = ImageOps.exif_transpose(image)
                     has_alpha = "A" in oriented.getbands() or "transparency" in oriented.info
                     images.append(oriented.convert("RGBA" if has_alpha else "RGB"))
+        except InputError:
+            raise
         except (
             UnidentifiedImageError,
             OSError,
+            ValueError,
             Image.DecompressionBombError,
             Image.DecompressionBombWarning,
         ) as exc:

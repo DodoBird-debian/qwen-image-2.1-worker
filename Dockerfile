@@ -24,6 +24,8 @@ COPY scripts/check_runtime.py /app/scripts/check_runtime.py
 COPY qwen_worker /app/qwen_worker
 RUN python /app/scripts/check_runtime.py
 COPY scripts /app/scripts
+COPY docs /app/docs
+RUN python /app/scripts/benchmark_vram.py --list
 COPY handler.py /app/handler.py
 COPY examples /app/examples
 CMD ["python", "-u", "/app/handler.py"]

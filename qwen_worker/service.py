@@ -10,6 +10,7 @@ from contextlib import nullcontext
 from qwen_worker.config import Settings
 from qwen_worker.images import decode_images, encode_image
 from qwen_worker.memory import GIB, MemoryEstimate, estimate, text_token_bound
+from qwen_worker.output_budget import parallel_output_fits
 from qwen_worker.requests import MAX_SEED, GenerationRequest, InputError
 
 logger = logging.getLogger("qwen_worker.service")
@@ -23,6 +24,7 @@ class ImageService:
         release_memory: Callable[[], None] | None = None,
         phase_budgets: Callable[[], dict[str, int]] | None = None,
         job_context: Callable | None = None,
+        preflight: Callable | None = None,
     ):
         self.pipeline = pipeline
         self.generator_factory = generator_factory
@@ -31,6 +33,7 @@ class ImageService:
         self.release_memory = release_memory
         self.phase_budgets = phase_budgets
         self.job_context = job_context
+        self.preflight = preflight
         self._lock = threading.Lock()
 
     def check_memory(self, request: GenerationRequest, references: list) -> tuple[MemoryEstimate, bool]:
@@ -124,9 +127,16 @@ class ImageService:
         with self._lock:
             logger.info("Inference lock wait: %.3fs", time.perf_counter() - started)
             try:
+                if self.preflight is not None:
+                    self.preflight(request, references)
                 # Observe available memory only after the previous job has
                 # relinquished the shared mutable pipeline.
                 _, can_parallel = self.check_memory(request, references)
+                if can_parallel and not parallel_output_fits(
+                    request, result, self.settings.max_output_bytes, OUTPUT_ENVELOPE_HEADROOM
+                ):
+                    can_parallel = False
+                    logger.info("Using sequential outputs: inline transport fit is uncertain; check each output before the next")
                 context = self.job_context() if self.job_context is not None else nullcontext()
                 with context:
                     seeds = [(request.seed + index) % (MAX_SEED + 1) for index in range(request.num_images)]

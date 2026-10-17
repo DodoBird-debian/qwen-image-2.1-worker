@@ -15,6 +15,10 @@ from diffusers import AutoencoderKLQwenImage21
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from qwen_worker.conditioning import make_pipeline_class
 
+for method in ("_get_num_multimodal_tokens", "get_text_with_replacements"):
+    if not callable(getattr(Qwen3VLProcessor, method, None)):
+        raise RuntimeError(f"Unsupported CPU positional preflight API: {method}")
+
 worker_pipeline = make_pipeline_class(QwenImage21Pipeline)
 if inspect.signature(worker_pipeline.__init__) != inspect.signature(QwenImage21Pipeline.__init__):
     raise RuntimeError("Worker adapter changed the Diffusers component constructor")

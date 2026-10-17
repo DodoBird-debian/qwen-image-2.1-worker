@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qwen_worker.config import MODEL_REVISION, Settings
+from qwen_worker.config import MODEL_REVISION, Settings, configure_cache
 from qwen_worker import runtime
 
 
@@ -50,10 +50,11 @@ class SnapshotTests(unittest.TestCase):
         download = Mock(side_effect=[PermissionError(errno.EROFS, "Read-only mount"), str(path)])
         with patch.object(runtime, "configure_cache", return_value=self.root), \
                 patch.object(runtime, "_cache_roots", return_value=[]), \
+                patch.object(runtime, "FALLBACK_HUB_CACHE", self.root / "fallback"), \
                 patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
             self.assertEqual(runtime.download_model(Settings()), str(path))
         self.assertEqual(download.call_count, 2)
-        self.assertEqual(download.call_args.kwargs["cache_dir"], str(Path("/cache/huggingface/hub")))
+        self.assertEqual(download.call_args.kwargs["cache_dir"], str(self.root / "fallback"))
         for call in download.call_args_list:
             self.assertEqual(call.kwargs["revision"], MODEL_REVISION)
 
@@ -65,6 +66,98 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 runtime.download_model(Settings())
         download.assert_called_once()
+
+    def test_cache_configuration_does_not_require_directory_creation(self):
+        destination = self.root / "readonly-parent" / "absent"
+        with patch.dict(os.environ, {"HF_HOME": str(destination)}, clear=True), \
+                patch.object(Path, "mkdir", side_effect=PermissionError(errno.EROFS, "read only")) as mkdir:
+            self.assertEqual(configure_cache(), destination)
+        mkdir.assert_not_called()
+
+    def test_complete_readonly_cache_hit_requires_no_writes_or_network(self):
+        path = make_snapshot(self.model_cache / "snapshots" / MODEL_REVISION)
+        download = Mock(side_effect=AssertionError("must not download"))
+        with patch.object(runtime, "configure_cache", return_value=self.root / "absent"), \
+                patch.object(runtime, "_cache_roots", return_value=[self.cache]), \
+                patch.object(Path, "mkdir", side_effect=PermissionError(errno.EROFS, "read only")) as mkdir, \
+                patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+            self.assertEqual(runtime.download_model(Settings()), str(path))
+        mkdir.assert_not_called()
+        download.assert_not_called()
+
+    def test_explicit_snapshot_requires_no_cache_writes_or_network(self):
+        path = make_snapshot(self.root / "explicit")
+        with patch.object(runtime, "configure_cache", side_effect=AssertionError("must not select download cache")), \
+                patch.object(Path, "mkdir", side_effect=PermissionError(errno.EROFS, "read only")):
+            self.assertEqual(runtime.download_model(Settings(model_path=str(path))), str(path))
+
+    def test_missing_readonly_directory_falls_back_before_network_call(self):
+        path = make_snapshot(self.root / "downloaded")
+        readonly = self.root / "readonly" / "hub"
+        fallback = self.root / "fallback"
+        download = Mock(return_value=str(path))
+        real_mkdir = Path.mkdir
+        def mkdir(target, *args, **kwargs):
+            if target == readonly:
+                raise PermissionError(errno.EROFS, "read only")
+            return real_mkdir(target, *args, **kwargs)
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(runtime, "configure_cache", return_value=readonly.parent), \
+                patch.object(runtime, "_cache_roots", return_value=[]), \
+                patch.object(runtime, "FALLBACK_HUB_CACHE", fallback), \
+                patch.object(Path, "mkdir", autospec=True, side_effect=mkdir), \
+                patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+            self.assertEqual(runtime.download_model(Settings()), str(path))
+        download.assert_called_once()
+        self.assertEqual(download.call_args.kwargs["cache_dir"], str(fallback))
+        self.assertEqual(download.call_args.kwargs["revision"], MODEL_REVISION)
+
+    def test_unwritable_fallback_does_not_retry_forever(self):
+        download = Mock(side_effect=AssertionError("no writable destination"))
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(runtime, "configure_cache", return_value=self.root), \
+                patch.object(runtime, "_cache_roots", return_value=[]), \
+                patch.object(runtime, "FALLBACK_HUB_CACHE", self.root / "fallback"), \
+                patch.object(Path, "mkdir", side_effect=PermissionError(errno.EACCES, "denied")) as mkdir, \
+                patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+            with self.assertRaises(PermissionError):
+                runtime.download_model(Settings())
+        self.assertEqual(mkdir.call_count, 2)
+        download.assert_not_called()
+
+    def test_disk_full_during_directory_creation_is_not_permission_fallback(self):
+        download = Mock()
+        with patch.object(runtime, "configure_cache", return_value=self.root), \
+                patch.object(runtime, "_cache_roots", return_value=[]), \
+                patch.object(Path, "mkdir", side_effect=OSError(errno.ENOSPC, "disk full")) as mkdir, \
+                patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+            with self.assertRaises(OSError) as caught:
+                runtime.download_model(Settings())
+        self.assertEqual(caught.exception.errno, errno.ENOSPC)
+        mkdir.assert_called_once()
+        download.assert_not_called()
+
+    def test_already_using_fallback_only_attempts_it_once(self):
+        fallback = self.root / "hub"
+        download = Mock(side_effect=PermissionError(errno.EROFS, "read only"))
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(runtime, "configure_cache", return_value=self.root), \
+                patch.object(runtime, "_cache_roots", return_value=[]), \
+                patch.object(runtime, "FALLBACK_HUB_CACHE", fallback), \
+                patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+            with self.assertRaises(PermissionError):
+                runtime.download_model(Settings())
+        download.assert_called_once()
+
+    def test_nonpermission_download_failure_has_no_fallback(self):
+        for failure in (RuntimeError("authentication"), ConnectionError("network")):
+            download = Mock(side_effect=failure)
+            with self.subTest(failure=failure), patch.object(runtime, "configure_cache", return_value=self.root), \
+                    patch.object(runtime, "_cache_roots", return_value=[]), \
+                    patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+                with self.assertRaises(type(failure)):
+                    runtime.download_model(Settings())
+            download.assert_called_once()
 
     def test_model_index_alone_is_not_complete(self):
         path = self.root / "partial"
@@ -231,7 +324,7 @@ class EncoderHookTests(unittest.TestCase):
 
 
 class RuntimeIntegrationTests(unittest.TestCase):
-    def load_fake_service(self):
+    def load_fake_service(self, settings=None):
         events = []
 
         class FakeModule:
@@ -312,8 +405,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
                                 backends=SimpleNamespace(cudnn=SimpleNamespace(version=lambda: 0)),
                                 cuda=cuda, set_num_threads=lambda threads: None, bfloat16="bf16",
                                 inference_mode=nullcontext)
-        with patch.dict(sys.modules, {"torch": torch, "diffusers": SimpleNamespace(QwenImage21Pipeline=FakePipeline)}), patch.object(runtime, "configure_cache"), patch.object(runtime, "download_model", return_value="mock"):
-            service = runtime.load_service(Settings())
+        with patch.dict(sys.modules, {"torch": torch, "diffusers": SimpleNamespace(QwenImage21Pipeline=FakePipeline)}), patch.object(runtime, "configure_cache"), patch.object(runtime, "download_model", return_value="mock"), patch.object(runtime, "RequestPreflight", return_value=Mock()) as preflight:
+            service = runtime.load_service(settings or Settings())
+        self.assertIs(service.preflight, preflight.return_value)
         events.clear()
         return service, events
 
@@ -341,6 +435,17 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(pipeline.text_encoder.tensor.device.type, "cpu")
         self.assertIn("clear_vae", events)
         self.assertIn("free_hooks", events)
+
+    def test_positional_preflight_still_runs_when_memory_guard_is_disabled(self):
+        from qwen_worker.requests import InputError
+        service, events = self.load_fake_service(Settings(memory_guard=False))
+        self.assertIsNone(service.memory_budget)
+        self.assertIsNone(service.phase_budgets)
+        service.preflight.side_effect = InputError("unsupported layout")
+        with self.assertRaisesRegex(InputError, "unsupported layout"):
+            service.handle({"input": {"prompt": "test"}})
+        service.preflight.assert_called_once()
+        self.assertNotIn(("text_encoder", "cuda"), events)
 
 
 if __name__ == "__main__":

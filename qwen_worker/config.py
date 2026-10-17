@@ -49,7 +49,7 @@ class Settings:
 
 
 def configure_cache() -> Path:
-    """Call before importing huggingface_hub, which reads its paths at import time."""
+    """Select paths before Hub imports; discovering a cache must not write to it."""
     if Path("/runpod-volume/huggingface-cache").is_dir():
         default = "/runpod-volume/huggingface-cache"
     elif Path("/runpod-volume/huggingface").is_dir():
@@ -59,5 +59,4 @@ def configure_cache() -> Path:
     else:
         default = "/cache/huggingface"
     cache = Path(os.environ.setdefault("HF_HOME", default))
-    cache.mkdir(parents=True, exist_ok=True)
     return cache

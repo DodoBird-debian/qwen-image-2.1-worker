@@ -29,6 +29,13 @@ def integer(data: dict, key: str, default: int, minimum: int, maximum: int) -> i
     return value
 
 
+def validate_utf8(value: str, field: str) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise InputError(f"{field} must contain valid Unicode text") from exc
+
+
 @dataclass(frozen=True)
 class GenerationRequest:
     prompt: str
@@ -73,6 +80,7 @@ class GenerationRequest:
         prompt = data.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 20_000:
             raise InputError("prompt must contain 1 to 20000 characters")
+        validate_utf8(prompt, "prompt")
         if "aspect_ratio" in data:
             ratio = data["aspect_ratio"]
             if not isinstance(ratio, str) or ratio not in ASPECT_RATIOS:
@@ -110,6 +118,8 @@ class GenerationRequest:
         negative = data.get("negative_prompt")
         if negative is not None and (not isinstance(negative, str) or len(negative) > 20_000):
             raise InputError("negative_prompt must be a string of at most 20000 characters")
+        if negative is not None:
+            validate_utf8(negative, "negative_prompt")
         if negative is not None and cfg <= 1:
             raise InputError("negative_prompt requires true_cfg_scale greater than 1")
         if cfg > 1 and negative is None:

@@ -1,5 +1,14 @@
 # Optimization and memory-accounting review
 
+The follow-up fixes are now implemented: see
+[current changes and verification](docs/FIXES_IMPLEMENTED.md). Earlier
+verification at worker commit `de63e15` is in the
+[API-frozen failure/cost review](docs/RUNPOD_RISK_REVIEW.md) for additional
+reproduced malformed-input refreshes, late output rejection, packaging findings,
+and all-48-case production routing checks. The historical environment and test
+counts below describe the earlier review, which passed 41 CPU tests. The
+implementation verification now passes 78 CPU tests.
+
 Reviewed 2026-10-17 against worker commit
 `54ce8e2bedbc239faf4944757112ce81659e2e66`, model revision
 `790c92633540aa0cb11d9abf19eb46d861714758`, and the pinned Diffusers source.

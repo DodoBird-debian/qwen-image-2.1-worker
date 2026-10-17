@@ -421,7 +421,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref1-kvon-parallel",
@@ -460,7 +463,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref1-kvoff-sequential",
@@ -499,7 +505,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref1-kvoff-parallel",
@@ -538,7 +547,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref4-kvon-sequential",
@@ -577,7 +589,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref4-kvon-parallel",
@@ -616,7 +631,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref4-kvoff-sequential",
@@ -655,7 +673,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref4-kvoff-parallel",
@@ -694,7 +715,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref10-kvon-sequential",
@@ -733,7 +757,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref10-kvon-parallel",
@@ -772,7 +799,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref10-kvoff-sequential",
@@ -811,7 +841,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg1-ref10-kvoff-parallel",
@@ -850,7 +883,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref1-kvon-sequential",
@@ -889,7 +925,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref1-kvon-parallel",
@@ -928,7 +967,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref1-kvoff-sequential",
@@ -967,7 +1009,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref1-kvoff-parallel",
@@ -1006,7 +1051,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref4-kvon-sequential",
@@ -1045,7 +1093,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref4-kvon-parallel",
@@ -1084,7 +1135,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref4-kvoff-sequential",
@@ -1123,7 +1177,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref4-kvoff-parallel",
@@ -1162,7 +1219,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref10-kvon-sequential",
@@ -1201,7 +1261,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref10-kvon-parallel",
@@ -1240,7 +1303,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref10-kvoff-sequential",
@@ -1279,7 +1345,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "1024-cfg2-ref10-kvoff-parallel",
@@ -1318,7 +1387,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref1-kvon-sequential",
@@ -1357,7 +1429,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref1-kvon-parallel",
@@ -1396,7 +1471,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref1-kvoff-sequential",
@@ -1435,7 +1513,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref1-kvoff-parallel",
@@ -1474,7 +1555,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref4-kvon-sequential",
@@ -1513,7 +1597,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref4-kvon-parallel",
@@ -1552,7 +1639,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref4-kvoff-sequential",
@@ -1591,7 +1681,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref4-kvoff-parallel",
@@ -1630,7 +1723,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg1-ref10-kvon-sequential",
@@ -1669,7 +1765,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg1-ref10-kvon-parallel",
@@ -1708,7 +1807,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg1-ref10-kvoff-sequential",
@@ -1747,7 +1849,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg1-ref10-kvoff-parallel",
@@ -1786,7 +1891,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg2-ref1-kvon-sequential",
@@ -1825,7 +1933,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg2-ref1-kvon-parallel",
@@ -1864,7 +1975,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg2-ref1-kvoff-sequential",
@@ -1903,7 +2017,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg2-ref1-kvoff-parallel",
@@ -1942,7 +2059,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "parallel",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg2-ref4-kvon-sequential",
@@ -1981,7 +2101,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg2-ref4-kvon-parallel",
@@ -2020,7 +2143,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg2-ref4-kvoff-sequential",
@@ -2059,7 +2185,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg2-ref4-kvoff-parallel",
@@ -2098,7 +2227,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "sequential",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "sequential"
     },
     {
       "case_id": "2048-cfg2-ref10-kvon-sequential",
@@ -2137,7 +2269,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg2-ref10-kvon-parallel",
@@ -2176,7 +2311,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": true,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg2-ref10-kvoff-sequential",
@@ -2215,7 +2353,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     },
     {
       "case_id": "2048-cfg2-ref10-kvoff-parallel",
@@ -2254,7 +2395,10 @@
       "measurement_status": "not_measured",
       "measured_job_peak_allocated_bytes": null,
       "measured_job_peak_reserved_bytes": null,
-      "sampled_process_peak_bytes": null
+      "sampled_process_peak_bytes": null,
+      "ideal_80gib_guard_route_for_four_outputs": "reject",
+      "forced_route_lower_bound_exceeds_80gib": false,
+      "ideal_80gib_final_route_for_four_outputs": "reject"
     }
   ]
 }

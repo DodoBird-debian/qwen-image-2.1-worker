@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from qwen_worker.memory import GIB, estimate, text_token_bound
+from qwen_worker.output_budget import parallel_output_fits
+from qwen_worker.requests import GenerationRequest
 
 
 def build_cases(fixture, spec):
@@ -99,6 +101,38 @@ def build_cases(fixture, spec):
             "sampled_process_peak_bytes": None,
         }
         cases.append(row)
+    # This describes the production guard, which chooses a route automatically.
+    # The benchmark instead forces the sequential/parallel route in each row.
+    # Capacity is illustrative: no driver, buffer or other-process reservation.
+    by_id = {case["case_id"]: case for case in cases}
+    for case in cases:
+        seq = by_id[case["case_id"].replace("-parallel", "-sequential")]
+        par = by_id[case["case_id"].replace("-sequential", "-parallel")]
+        capacity = 80 * GIB
+        case["ideal_80gib_guard_route_for_four_outputs"] = (
+            "reject" if seq["worker_heuristic_parameter_plus_request_peak_bytes"] > capacity
+            else "parallel" if par["worker_heuristic_parameter_plus_request_peak_bytes"] <= capacity
+            else "sequential"
+        )
+        case["forced_route_lower_bound_exceeds_80gib"] = (
+            case["identified_eager_tensors_peak_lower_bound_bytes"] > capacity
+        )
+        request = GenerationRequest.parse({
+            "prompt": fixture["prompt"], "width": case["output_width"], "height": case["output_height"],
+            "num_images": fixture["num_outputs"], "seed": fixture["seed"],
+            "output_resolution": case["reference_processing_resolution"],
+            "true_cfg_scale": case["cfg_scale"], "use_kv_cache": case["kv_cache"],
+        })
+        metadata = {"model": "Qwen/Qwen-Image-2.1", "revision": spec["model_revision"], "images": [],
+                    "parameters": {"num_inference_steps": fixture["num_inference_steps"],
+                                   "true_cfg_scale": float(case["cfg_scale"]),
+                                   "output_resolution": case["reference_processing_resolution"],
+                                   "use_kv_cache": case["kv_cache"]}}
+        memory_route = case["ideal_80gib_guard_route_for_four_outputs"]
+        case["ideal_80gib_final_route_for_four_outputs"] = (
+            "sequential" if memory_route == "parallel" and not parallel_output_fits(request, metadata, 8_000_000, 4096)
+            else memory_route
+        )
     return cases
 
 
@@ -175,11 +209,16 @@ def write_report(cases, fixture, destination):
         "All-component BF16 parameter payload: **30.212083526 GiB**.",
         "DiT + VAE BF16 parameter payload: **13.882043101 GiB**.",
         "Text/template changes alter the small exact K/V offsets shown here.",
+        "", "**80 GiB guard route** models a wholly available 80 GiB device using parameter payloads only;",
+        "driver/context memory, buffers, other processes and fragmentation reduce actual headroom.",
+        "The VRAM guard column reports memory admission; the final route also applies the inline output budget.",
+        "Both columns describe four outputs and are repeated across the two forced benchmark rows.",
+        "Admission is not a successful GPU measurement. See [the failure/cost audit](RUNPOD_RISK_REVIEW.md).",
     ]
     for resolution in (1024, 2048):
         out += ["", f"## {resolution} × {resolution} output and reference processing", "",
-                "| CFG | Inputs | KV | Execution | K/V exact | Eager tensor floor | Worker projection | Measured allocated peak |",
-                "|---:|---:|---|---|---:|---:|---:|---|"]
+                "| CFG | Inputs | KV | Forced execution | K/V exact | Eager tensor floor | Worker projection | 80 GiB VRAM guard | Final route | Measured allocated peak |",
+                "|---:|---:|---|---|---:|---:|---:|---|---|---|"]
         for c in cases:
             if c["output_width"] != resolution:
                 continue
@@ -190,6 +229,8 @@ def write_report(cases, fixture, destination):
                 f"| {c['exact_persistent_kv_bytes']/GIB:.6f} "
                 f"| {c['identified_eager_tensors_peak_lower_bound_bytes']/GIB:.6f} "
                 f"| {c['worker_heuristic_parameter_plus_request_peak_bytes']/GIB:.6f} "
+                f"| {c['ideal_80gib_guard_route_for_four_outputs']} "
+                f"| {c['ideal_80gib_final_route_for_four_outputs']} "
                 f"| {measured} |"
             )
     out += [
@@ -200,6 +241,10 @@ def write_report(cases, fixture, destination):
         "- Cache-off repeats full-prefix DiT computation at every step. Its memory use cannot be obtained by merely subtracting cache bytes from a measured cache-on peak.",
         "- Rows with an identified-tensor lower bound exceeding a GPU's actual capacity cannot complete under this placement policy and eager implementation. A floor below capacity does not establish that they fit.",
         "- The worker's byte-based token bound is intentionally larger than this fixture's actual token counts. Both exact K/V and the current worker's bounded K/V are retained in CSV/JSON.", "",
+        "- Eleven forced rows have lower bounds above 80 GiB. Under the idealized 80 GiB guard calculation, every one is rejected or routed to sequential execution before inference.",
+        "- Memory admission alone routes the 24 distinct requests as 13 parallel, six sequential, and five rejected. The output budget changes the 13 parallel candidates to sequential: final routing is 19 sequential and five rejected. Each appears twice in this matrix.",
+        "- Four PNGs at 1024/2048 square have no guaranteed inline fit. Sequential encoding stops remaining calls once actual output exceeds the cap; compressible batches remain accepted. A late failure is still possible.",
+        "- These checks cover VRAM admission for the fixed fixture. Long positional layouts, malformed inputs, oversized encoded outputs and deployment failures need separate checks.", "",
         "Sources: pinned [DiT implementation](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/models/transformers/transformer_qwenimage21.py),",
         "[pipeline](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py),",
         "[tensor inventory](qwen-image-2.1-spec.json), and [worker estimate implementation](../qwen_worker/memory.py).", "",

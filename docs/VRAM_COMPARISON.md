@@ -37,63 +37,69 @@ All-component BF16 parameter payload: **30.212083526 GiB**.
 DiT + VAE BF16 parameter payload: **13.882043101 GiB**.
 Text/template changes alter the small exact K/V offsets shown here.
 
+**80 GiB guard route** models a wholly available 80 GiB device using parameter payloads only;
+driver/context memory, buffers, other processes and fragmentation reduce actual headroom.
+The VRAM guard column reports memory admission; the final route also applies the inline output budget.
+Both columns describe four outputs and are repeated across the two forced benchmark rows.
+Admission is not a successful GPU measurement. See [the failure/cost audit](RUNPOD_RISK_REVIEW.md).
+
 ## 1024 × 1024 output and reference processing
 
-| CFG | Inputs | KV | Execution | K/V exact | Eager tensor floor | Worker projection | Measured allocated peak |
-|---:|---:|---|---|---:|---:|---:|---|
-| 1 | 1 | on | sequential | 2.018066 | 30.212084 | 35.344896 | not_measured |
-| 1 | 1 | on | parallel | 8.072266 | 30.212084 | 35.344896 | not_measured |
-| 1 | 1 | off | sequential | 0.000000 | 30.212084 | 35.344896 | not_measured |
-| 1 | 1 | off | parallel | 0.000000 | 30.212084 | 35.344896 | not_measured |
-| 1 | 4 | on | sequential | 8.026855 | 30.212084 | 41.368334 | not_measured |
-| 1 | 4 | on | parallel | 32.107422 | 51.629571 | 61.225793 | not_measured |
-| 1 | 4 | off | sequential | 0.000000 | 30.212084 | 41.368334 | not_measured |
-| 1 | 4 | off | parallel | 0.000000 | 30.212084 | 41.368334 | not_measured |
-| 1 | 10 | on | sequential | 20.044922 | 37.027032 | 53.415209 | not_measured |
-| 1 | 10 | on | parallel | 80.179688 | 106.461999 | 121.460168 | not_measured |
-| 1 | 10 | off | sequential | 0.000000 | 30.212084 | 53.415209 | not_measured |
-| 1 | 10 | off | parallel | 0.000000 | 30.212084 | 53.415209 | not_measured |
-| 2 | 1 | on | sequential | 4.025391 | 30.212084 | 35.344896 | not_measured |
-| 2 | 1 | on | parallel | 16.101562 | 32.237725 | 43.460168 | not_measured |
-| 2 | 1 | off | sequential | 0.000000 | 30.212084 | 35.344896 | not_measured |
-| 2 | 1 | off | parallel | 0.000000 | 30.212084 | 35.344896 | not_measured |
-| 2 | 4 | on | sequential | 16.042969 | 31.333528 | 41.368334 | not_measured |
-| 2 | 4 | on | parallel | 64.171875 | 83.687982 | 103.694543 | not_measured |
-| 2 | 4 | off | sequential | 0.000000 | 30.212084 | 41.368334 | not_measured |
-| 2 | 4 | off | parallel | 0.000000 | 30.212084 | 41.368334 | not_measured |
-| 2 | 10 | on | sequential | 40.079102 | 57.059701 | 68.327356 | not_measured |
-| 2 | 10 | on | parallel | 160.316406 | 186.592675 | 224.163293 | not_measured |
-| 2 | 10 | off | sequential | 0.000000 | 30.212084 | 53.415209 | not_measured |
-| 2 | 10 | off | parallel | 0.000000 | 30.212084 | 62.788293 | not_measured |
+| CFG | Inputs | KV | Forced execution | K/V exact | Eager tensor floor | Worker projection | 80 GiB VRAM guard | Final route | Measured allocated peak |
+|---:|---:|---|---|---:|---:|---:|---|---|---|
+| 1 | 1 | on | sequential | 2.018066 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 1 | 1 | on | parallel | 8.072266 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 1 | 1 | off | sequential | 0.000000 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 1 | 1 | off | parallel | 0.000000 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 1 | 4 | on | sequential | 8.026855 | 30.212084 | 41.368334 | parallel | sequential | not_measured |
+| 1 | 4 | on | parallel | 32.107422 | 51.629571 | 61.225793 | parallel | sequential | not_measured |
+| 1 | 4 | off | sequential | 0.000000 | 30.212084 | 41.368334 | parallel | sequential | not_measured |
+| 1 | 4 | off | parallel | 0.000000 | 30.212084 | 41.368334 | parallel | sequential | not_measured |
+| 1 | 10 | on | sequential | 20.044922 | 37.027032 | 53.415209 | sequential | sequential | not_measured |
+| 1 | 10 | on | parallel | 80.179688 | 106.461999 | 121.460168 | sequential | sequential | not_measured |
+| 1 | 10 | off | sequential | 0.000000 | 30.212084 | 53.415209 | parallel | sequential | not_measured |
+| 1 | 10 | off | parallel | 0.000000 | 30.212084 | 53.415209 | parallel | sequential | not_measured |
+| 2 | 1 | on | sequential | 4.025391 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 2 | 1 | on | parallel | 16.101562 | 32.237725 | 43.460168 | parallel | sequential | not_measured |
+| 2 | 1 | off | sequential | 0.000000 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 2 | 1 | off | parallel | 0.000000 | 30.212084 | 35.344896 | parallel | sequential | not_measured |
+| 2 | 4 | on | sequential | 16.042969 | 31.333528 | 41.368334 | sequential | sequential | not_measured |
+| 2 | 4 | on | parallel | 64.171875 | 83.687982 | 103.694543 | sequential | sequential | not_measured |
+| 2 | 4 | off | sequential | 0.000000 | 30.212084 | 41.368334 | parallel | sequential | not_measured |
+| 2 | 4 | off | parallel | 0.000000 | 30.212084 | 41.368334 | parallel | sequential | not_measured |
+| 2 | 10 | on | sequential | 40.079102 | 57.059701 | 68.327356 | sequential | sequential | not_measured |
+| 2 | 10 | on | parallel | 160.316406 | 186.592675 | 224.163293 | sequential | sequential | not_measured |
+| 2 | 10 | off | sequential | 0.000000 | 30.212084 | 53.415209 | parallel | sequential | not_measured |
+| 2 | 10 | off | parallel | 0.000000 | 30.212084 | 62.788293 | parallel | sequential | not_measured |
 
 ## 2048 × 2048 output and reference processing
 
-| CFG | Inputs | KV | Execution | K/V exact | Eager tensor floor | Worker projection | Measured allocated peak |
-|---:|---:|---|---|---:|---:|---:|---|
-| 1 | 1 | on | sequential | 8.018066 | 30.212084 | 41.344896 | not_measured |
-| 1 | 1 | on | parallel | 32.072266 | 54.964471 | 67.296106 | not_measured |
-| 1 | 1 | off | sequential | 0.000000 | 30.212084 | 41.344896 | not_measured |
-| 1 | 1 | off | parallel | 0.000000 | 30.212084 | 41.344896 | not_measured |
-| 1 | 4 | on | sequential | 32.026855 | 51.537675 | 65.368334 | not_measured |
-| 1 | 4 | on | parallel | 128.107422 | 164.504571 | 187.413293 | not_measured |
-| 1 | 4 | off | sequential | 0.000000 | 30.212084 | 65.368334 | not_measured |
-| 1 | 4 | off | parallel | 0.000000 | 36.397149 | 65.368334 | not_measured |
-| 1 | 10 | on | sequential | 80.044922 | 106.308282 | 119.198449 | not_measured |
-| 1 | 10 | on | parallel | 320.179688 | 383.586999 | 427.647668 | not_measured |
-| 1 | 10 | off | sequential | 0.000000 | 30.212084 | 113.415209 | not_measured |
-| 1 | 10 | off | parallel | 0.000000 | 63.407312 | 113.415209 | not_measured |
-| 2 | 1 | on | sequential | 16.025391 | 32.158464 | 41.344896 | not_measured |
-| 2 | 1 | on | parallel | 64.101562 | 86.987725 | 115.647668 | not_measured |
-| 2 | 1 | off | sequential | 0.000000 | 30.212084 | 41.344896 | not_measured |
-| 2 | 1 | off | parallel | 0.000000 | 30.212084 | 50.835168 | not_measured |
-| 2 | 4 | on | sequential | 64.042969 | 83.552278 | 101.257043 | not_measured |
-| 2 | 4 | on | parallel | 256.171875 | 292.562982 | 355.882043 | not_measured |
-| 2 | 4 | off | sequential | 0.000000 | 30.212084 | 65.368334 | not_measured |
-| 2 | 4 | off | parallel | 0.000000 | 36.397149 | 98.882043 | not_measured |
-| 2 | 10 | on | sequential | 160.079102 | 186.340951 | 221.374231 | not_measured |
-| 2 | 10 | on | parallel | 640.316406 | 703.717675 | 836.350793 | not_measured |
-| 2 | 10 | off | sequential | 0.000000 | 30.212084 | 113.415209 | not_measured |
-| 2 | 10 | off | parallel | 0.000000 | 63.407312 | 194.975793 | not_measured |
+| CFG | Inputs | KV | Forced execution | K/V exact | Eager tensor floor | Worker projection | 80 GiB VRAM guard | Final route | Measured allocated peak |
+|---:|---:|---|---|---:|---:|---:|---|---|---|
+| 1 | 1 | on | sequential | 8.018066 | 30.212084 | 41.344896 | parallel | sequential | not_measured |
+| 1 | 1 | on | parallel | 32.072266 | 54.964471 | 67.296106 | parallel | sequential | not_measured |
+| 1 | 1 | off | sequential | 0.000000 | 30.212084 | 41.344896 | parallel | sequential | not_measured |
+| 1 | 1 | off | parallel | 0.000000 | 30.212084 | 41.344896 | parallel | sequential | not_measured |
+| 1 | 4 | on | sequential | 32.026855 | 51.537675 | 65.368334 | sequential | sequential | not_measured |
+| 1 | 4 | on | parallel | 128.107422 | 164.504571 | 187.413293 | sequential | sequential | not_measured |
+| 1 | 4 | off | sequential | 0.000000 | 30.212084 | 65.368334 | parallel | sequential | not_measured |
+| 1 | 4 | off | parallel | 0.000000 | 36.397149 | 65.368334 | parallel | sequential | not_measured |
+| 1 | 10 | on | sequential | 80.044922 | 106.308282 | 119.198449 | reject | reject | not_measured |
+| 1 | 10 | on | parallel | 320.179688 | 383.586999 | 427.647668 | reject | reject | not_measured |
+| 1 | 10 | off | sequential | 0.000000 | 30.212084 | 113.415209 | reject | reject | not_measured |
+| 1 | 10 | off | parallel | 0.000000 | 63.407312 | 113.415209 | reject | reject | not_measured |
+| 2 | 1 | on | sequential | 16.025391 | 32.158464 | 41.344896 | sequential | sequential | not_measured |
+| 2 | 1 | on | parallel | 64.101562 | 86.987725 | 115.647668 | sequential | sequential | not_measured |
+| 2 | 1 | off | sequential | 0.000000 | 30.212084 | 41.344896 | parallel | sequential | not_measured |
+| 2 | 1 | off | parallel | 0.000000 | 30.212084 | 50.835168 | parallel | sequential | not_measured |
+| 2 | 4 | on | sequential | 64.042969 | 83.552278 | 101.257043 | reject | reject | not_measured |
+| 2 | 4 | on | parallel | 256.171875 | 292.562982 | 355.882043 | reject | reject | not_measured |
+| 2 | 4 | off | sequential | 0.000000 | 30.212084 | 65.368334 | sequential | sequential | not_measured |
+| 2 | 4 | off | parallel | 0.000000 | 36.397149 | 98.882043 | sequential | sequential | not_measured |
+| 2 | 10 | on | sequential | 160.079102 | 186.340951 | 221.374231 | reject | reject | not_measured |
+| 2 | 10 | on | parallel | 640.316406 | 703.717675 | 836.350793 | reject | reject | not_measured |
+| 2 | 10 | off | sequential | 0.000000 | 30.212084 | 113.415209 | reject | reject | not_measured |
+| 2 | 10 | off | parallel | 0.000000 | 63.407312 | 194.975793 | reject | reject | not_measured |
 
 ## Consequences
 
@@ -103,6 +109,11 @@ Text/template changes alter the small exact K/V offsets shown here.
 - Cache-off repeats full-prefix DiT computation at every step. Its memory use cannot be obtained by merely subtracting cache bytes from a measured cache-on peak.
 - Rows with an identified-tensor lower bound exceeding a GPU's actual capacity cannot complete under this placement policy and eager implementation. A floor below capacity does not establish that they fit.
 - The worker's byte-based token bound is intentionally larger than this fixture's actual token counts. Both exact K/V and the current worker's bounded K/V are retained in CSV/JSON.
+
+- Eleven forced rows have lower bounds above 80 GiB. Under the idealized 80 GiB guard calculation, every one is rejected or routed to sequential execution before inference.
+- Memory admission alone routes the 24 distinct requests as 13 parallel, six sequential, and five rejected. The output budget changes the 13 parallel candidates to sequential: final routing is 19 sequential and five rejected. Each appears twice in this matrix.
+- Four PNGs at 1024/2048 square have no guaranteed inline fit. Sequential encoding stops remaining calls once actual output exceeds the cap; compressible batches remain accepted. A late failure is still possible.
+- These checks cover VRAM admission for the fixed fixture. Long positional layouts, malformed inputs, oversized encoded outputs and deployment failures need separate checks.
 
 Sources: pinned [DiT implementation](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/models/transformers/transformer_qwenimage21.py),
 [pipeline](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py),

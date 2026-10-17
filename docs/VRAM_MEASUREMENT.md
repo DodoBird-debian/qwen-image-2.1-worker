@@ -161,9 +161,12 @@ allocation lifetimes but cannot see every non-PyTorch CUDA allocation. [5]
 ## Executable measurement method
 
 Use the worker's actual CUDA container/dependencies on a dedicated NVIDIA GPU
-with sufficient host RAM, disk, and checkpoint storage. This chat environment has
-no NVIDIA device and an 8 GiB host-memory cgroup limit; it cannot load and measure
-this full pipeline. The scripts do not fabricate GPU measurements here.
+with sufficient host RAM, disk, and checkpoint storage. The current verification
+computer has a 6 GiB GTX 1660 Ti, which lacks the required native BF16 support and
+capacity; it cannot measure this full pipeline. Earlier research used a Linux
+environment without a GPU. The scripts do not fabricate GPU measurements here.
+The Dockerfile now packages the required fixture/spec files and checks case
+listing during build; see the [fixes and verification](FIXES_IMPLEMENTED.md).
 
 ```bash
 # Regenerate all 48 analytical rows. This does not need CUDA or model weights.

@@ -14,8 +14,10 @@ from pathlib import Path
 
 from qwen_worker.config import Settings, configure_cache
 from qwen_worker.service import ImageService
+from qwen_worker.preflight import RequestPreflight
 
 logger = logging.getLogger("qwen_worker.runtime")
+FALLBACK_HUB_CACHE = Path("/cache/huggingface/hub")
 
 
 def _format_bytes(size_bytes: int) -> str:
@@ -147,15 +149,17 @@ def download_model(settings: Settings) -> str:
     )
     download_cache = _hub_cache_path(cache)
     try:
+        download_cache.mkdir(parents=True, exist_ok=True)
         downloaded_path = snapshot_download(cache_dir=str(download_cache), **download_args)
     except OSError as exc:
         # Runpod managed model mounts may be read-only. A missing pinned
         # revision must download to container storage, never select another
         # cached revision. Do not disguise network/disk-full errors as this case.
-        fallback = Path("/cache/huggingface/hub")
+        fallback = FALLBACK_HUB_CACHE
         if exc.errno not in {errno.EACCES, errno.EPERM, errno.EROFS} or download_cache == fallback:
             raise
         logger.warning("[MODEL RESOLVER] Cache is read-only; downloading exact revision to %s", fallback)
+        fallback.mkdir(parents=True, exist_ok=True)
         downloaded_path = snapshot_download(cache_dir=str(fallback), **download_args)
     _validate_snapshot(Path(downloaded_path))
     logger.info("[MODEL RESOLVER] Snapshot ready in %.2fs: %s", time.perf_counter() - started, downloaded_path)
@@ -320,6 +324,7 @@ def load_service(settings: Settings) -> ImageService:
         local_files_only=True,
     )
     _validate_architecture(pipe)
+    preflight = RequestPreflight(pipe)
     _install_conditioning_encoder_hook(pipe.text_encoder)
     component_bytes = {name: _module_bytes(getattr(pipe, name)) for name in ("text_encoder", "transformer", "vae")}
     for name, size in component_bytes.items():
@@ -433,6 +438,7 @@ def load_service(settings: Settings) -> ImageService:
         phase_budgets=get_phase_budgets if settings.memory_guard else None,
         release_memory=release_memory,
         job_context=pipe.conditioning_context,
+        preflight=preflight,
     )
 
 

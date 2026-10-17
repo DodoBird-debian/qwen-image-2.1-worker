@@ -6,9 +6,13 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from collections import Counter
 
 from scripts.benchmark_vram import ProcessSampler, Recorder
 from scripts.vram_matrix import ROOT, build_cases, merge_measurements
+from qwen_worker.config import Settings
+from qwen_worker.requests import GenerationRequest, InputError
+from qwen_worker.service import ImageService
 
 
 class MatrixTests(unittest.TestCase):
@@ -41,6 +45,41 @@ class MatrixTests(unittest.TestCase):
             if c["execution"] == "sequential":
                 parallel = self.case(c["case_id"].replace("sequential", "parallel"))
                 self.assertEqual(parallel["exact_persistent_kv_bytes"], 4 * c["exact_persistent_kv_bytes"])
+
+    def test_80gib_routing_matches_the_real_service_guard_for_all_cases(self):
+        for c in self.cases:
+            resident = c["exact_bf16_parameter_bytes_dit_and_vae"]
+            weights = c["exact_bf16_parameter_bytes_all_components"]
+            service = ImageService(None, None, Settings(), phase_budgets=lambda: {
+                "conditioning": 80 * 2**30 - weights,
+                "denoising": 80 * 2**30 - resident,
+                "decoding": 80 * 2**30 - resident,
+            })
+            request = GenerationRequest.parse({
+                "prompt": self.fixture["prompt"], "negative_prompt": None,
+                "width": c["output_width"], "height": c["output_height"],
+                "num_images": 4, "output_resolution": c["reference_processing_resolution"],
+                "true_cfg_scale": c["cfg_scale"], "use_kv_cache": c["kv_cache"],
+            })
+            references = [SimpleNamespace(size=(1024, 1024))] * c["reference_count"]
+            try:
+                _, parallel = service.check_memory(request, references)
+                actual = "parallel" if parallel else "sequential"
+            except InputError:
+                actual = "reject"
+            self.assertEqual(c["ideal_80gib_guard_route_for_four_outputs"], actual, c["case_id"])
+
+    def test_impossible_forced_rows_are_rejected_or_rerouted(self):
+        impossible = [c for c in self.cases if c["forced_route_lower_bound_exceeds_80gib"]]
+        self.assertEqual(len(impossible), 11)
+        for c in impossible:
+            route = c["ideal_80gib_guard_route_for_four_outputs"]
+            self.assertTrue(route == "reject" or (route == "sequential" and c["execution"] == "parallel"))
+        unique_requests = [c for c in self.cases if c["execution"] == "sequential"]
+        self.assertEqual(Counter(c["ideal_80gib_guard_route_for_four_outputs"] for c in unique_requests),
+                         {"parallel": 13, "sequential": 6, "reject": 5})
+        self.assertEqual(Counter(c["ideal_80gib_final_route_for_four_outputs"] for c in unique_requests),
+                         {"sequential": 19, "reject": 5})
 
     def test_cache_off_is_not_a_zero_vram_measurement(self):
         for c in self.cases:
