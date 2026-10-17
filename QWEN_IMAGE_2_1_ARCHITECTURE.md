@@ -1301,4 +1301,3 @@ serialization; the running worker's source is selected by its dependency pin.
   "temporal_patch_size": 2
 }
 ```
-

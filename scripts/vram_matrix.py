@@ -224,7 +224,7 @@ def main():
     (args.output_dir / "cases.json").write_text(json.dumps(payload, indent=2) + "\n")
     with (args.output_dir / "cases.csv").open("w", newline="") as handle:
         fields = list(dict.fromkeys(key for case in cases for key in case))
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(cases)
     write_report(cases, fixture, ROOT / "docs/VRAM_COMPARISON.md")
