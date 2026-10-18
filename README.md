@@ -24,8 +24,10 @@ python scripts/client.py YOUR_ENDPOINT_ID --input examples/generate.json
 
 The client submits to `/run`, waits on the returned job id, and saves images and
 metadata under `outputs/<job-id>/`. A client timeout does not cancel the remote job.
-Cold starts include pulling the container, downloading uncached weights, and loading
-the model. Use `examples/smoke.json` for a 512×512, four-step boot test; it is not a
+Cold starts include pulling the container and loading the cached model. Startup
+is strictly cache-only: a missing, incomplete, or wrong-revision snapshot is fatal,
+and no weights are downloaded by the serving process. Use `examples/smoke.json`
+for a 512×512, four-step boot test; it is not a
 quality benchmark.
 
 A minimal request:
@@ -110,8 +112,24 @@ Runpod wraps the worker result in its job `output` field:
 
 The time shown here is illustrative. PNG and alpha WebP preserve transparency;
 JPEG composites alpha on white. The worker caps serialized inline output at
-approximately 8 MB, including base64 overhead. For larger batches use separate
-requests or smaller dimensions / JPEG. `scripts/client.py --decode response.json`
+8,000,000 bytes, including base64 and JSON metadata, with 4,096 bytes reserved for
+Runpod's envelope. The final check also enforces a hard ceiling of 10,000,000 bytes.
+When a result is too large, the worker optimizes the encoding, lowers JPEG/WebP
+quality if necessary, then proportionally resizes down to a minimum 256-pixel
+short side (never enlarging smaller outputs). If it still does not fit, it switches
+to JPEG and tries progressively lower quality, down to 1. JPEG flattens transparency
+on white. If the full batch still cannot fit, the worker returns the largest fitting
+subset, preserving the selected images' seeds and order. It checks all subsets,
+so a large first image cannot prevent sending more smaller images. In sequential
+mode, a partial result stops remaining generation passes to avoid wasting compute.
+No inference is retried. A top-level `delivery` object reports `requested_images`,
+`returned_images`, `partial`, and human-readable `warnings` about JPEG, transparency,
+and omitted images. Its bytes are included in the size check. Clients must accept
+fewer images and inspect each actual MIME type. Returned width and height always
+describe the encoded image, which may be smaller than the request. Compression
+uses the original CPU pixels. Compression stages, sizes, quality, and dimensions are logged. Clients that
+map results onto an edit canvas must scale coordinates using the returned dimensions.
+`scripts/client.py --decode response.json`
 also decodes previously saved API results.
 
 ## Configuration
@@ -120,7 +138,7 @@ also decodes previously saved API results.
 |---|---|
 | `MODEL_ID` | `Qwen/Qwen-Image-2.1`; alternate checkpoints must use the same pipeline |
 | `MODEL_REVISION` | `790c92633540aa0cb11d9abf19eb46d861714758`; change together with MODEL_ID |
-| `MODEL_PATH` | Optional complete local Diffusers snapshot; bypasses downloads/revision selection |
+| `MODEL_PATH` | Optional complete local Diffusers snapshot; must already exist; bypasses Hub revision lookup |
 | `HF_HOME` | Automatic persistent-volume or container-cache path |
 | `HF_TOKEN` | Optional, handled by huggingface_hub |
 | `CPU_OFFLOAD` | `text_encoder` (default), `model`, `none`, or `sequential`; select from measured phase peaks on the target GPU |
@@ -145,6 +163,44 @@ its autoregressive cache. VAE slicing bounds batch decode work per image.
 
 Checkpoint discovery accepts the configured revision only, or a complete explicit
 `MODEL_PATH`. An unrelated or incomplete cached model cannot silently satisfy it.
+The worker validates metadata and every referenced weight shard before loading
+GPU libraries, enables Hub/Transformers offline mode, and uses local-only component
+loading. There is no serving-mode download fallback. Cache validation checks file
+presence and nonempty shards; the model loader still checks tensor contents.
+
+Provision the cache separately, before starting a GPU worker. Runpod cached-model
+mounts must contain the exact `MODEL_ID` and `MODEL_REVISION` configured on the
+endpoint. If using your own persistent cache, the explicit provisioning command is:
+
+```bash
+docker run --rm -v qwen-cache:/cache qwen-image-2.1-worker:0.0.1.2 \
+  python scripts/download_model.py
+```
+
+This command intentionally permits downloads and does not need a GPU. Set the same
+model/revision environment variables on provisioning and serving containers. The
+serving runtime never invokes this downloader. A fatal cache error exits before
+queue registration; correct the mount/revision before restarting workers.
+
+### Generation logs
+
+Each job logs dimensions, references, actual sequential/parallel routing, CPU
+offload mode, pass number, and seeds. Denoising logs the first/last step and at
+most one update per five seconds between them, with progress, elapsed time and an
+estimated remaining time. The completion/failure summary includes total elapsed
+time, lock wait, pipeline/encoding time, image count, response bytes, and peak
+PyTorch CUDA allocated/reserved VRAM across **all** passes of the job. These are
+allocator peaks, not device-wide driver/process memory measurements. Sequential
+generation resets peak counters once per job, rather than once per image.
+
+For example (illustrative values):
+
+```text
+[JOB example] GENERATION START: route=sequential, outputs=2, steps=40, offload=model
+[JOB example] Generation pass 1/2: 1 image(s), seeds=[42]
+[DENOISING] step 20/40 (50%), pipeline elapsed=29.00s, estimated remaining=29.00s
+[JOB example] COMPLETE: route=sequential, images=2/2, elapsed=117.000s, lock_wait=0.000s, pipeline=115.000s, encoding=2.000s, peak VRAM allocated=16.37 GiB, reserved=16.54 GiB, response=4500000 bytes
+```
 
 The worker uses BF16 and requires an Ampere-or-newer CUDA GPU. It keeps one model
 instance per process and serializes inference. CUDA OOM returns an actionable job

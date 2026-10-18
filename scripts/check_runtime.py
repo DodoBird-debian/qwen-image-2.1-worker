@@ -39,6 +39,8 @@ required = {
     "output_resolution",
     "use_kv_cache",
     "num_images_per_prompt",
+    "callback_on_step_end",
+    "callback_on_step_end_tensor_inputs",
 }
 missing = required - set(inspect.signature(QwenImage21Pipeline.__call__).parameters)
 if missing:

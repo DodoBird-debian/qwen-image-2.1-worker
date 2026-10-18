@@ -15,10 +15,8 @@ try:
 except ImportError:
     runpod = None
 
-try:
-    import torch
-except ImportError:
-    torch = None
+# Runtime resolves the required local snapshot before importing GPU libraries.
+torch = None
 
 
 class FlushStreamHandler(logging.StreamHandler):
@@ -52,13 +50,14 @@ _service_lock = threading.Lock()
 
 
 def get_service():
-    global _service
+    global _service, torch
     if _service is None:
         with _service_lock:
             if _service is None:
                 logger.info("[INIT] Initializing Qwen-Image-2.1 service runtime...")
                 t0 = time.perf_counter()
                 _service = load_service(Settings.from_env())
+                torch = sys.modules.get("torch")
                 logger.info("[INIT] Service initialization completed in %.2fs. Listening for RunPod serverless jobs.", time.perf_counter() - t0)
     return _service
 

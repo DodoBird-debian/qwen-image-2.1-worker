@@ -222,19 +222,18 @@ class OutputTests(unittest.TestCase):
         exited.assert_called_once()
         release.assert_called_once()
 
-    def test_overflow_stops_before_other_outputs_and_keeps_worker_warm(self):
+    def test_impossible_metadata_limit_rejects_before_gpu_and_keeps_worker_warm(self):
         release = Mock()
-        service, calls = self.service(noise=True, settings=Settings(max_output_bytes=100_000), release_memory=release)
+        service, calls = self.service(noise=True, settings=Settings(max_output_bytes=4096), release_memory=release)
         handler = importlib.import_module("handler")
         with patch.object(handler, "get_service", return_value=service), patch.object(handler.logger, "disabled", True):
             result = handler.handler({"input": {"prompt": "test", "width": 256, "height": 256, "num_images": 4}})
         self.assertEqual(set(result), {"error"})
         self.assertIn("inline output limit", result["error"])
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0].get("num_images_per_prompt", 1), 1)
+        self.assertEqual(len(calls), 0)
         release.assert_called_once()
 
-    def test_aggregate_overflow_stops_later_calls_and_exits_job_context(self):
+    def test_aggregate_overflow_is_compressed_without_regeneration_and_exits_job_context(self):
         active = []
         @contextmanager
         def context():
@@ -244,9 +243,12 @@ class OutputTests(unittest.TestCase):
             finally:
                 active.clear()
         service, calls = self.service(noise=True, settings=Settings(max_output_bytes=500_000), job_context=context)
-        with self.assertRaises(InputError):
-            service.handle({"input": {"prompt": "test", "width": 256, "height": 256, "num_images": 4}})
-        self.assertEqual(len(calls), 2)
+        result = service.handle({"input": {"prompt": "test", "width": 256, "height": 256, "num_images": 4, "seed": 42}})
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([item["seed"] for item in result["images"]], [42, 43, 44, 45])
+        self.assertLessEqual(len(json.dumps(result).encode()) + OUTPUT_ENVELOPE_HEADROOM, 500_000)
+        self.assertTrue(all(item["width"] == 256 and item["mime_type"] == "image/jpeg" for item in result["images"]))
+        self.assertFalse(result["delivery"]["partial"])
         self.assertTrue(all(call.get("num_images_per_prompt", 1) == 1 for call in calls))
         self.assertFalse(active)
 
@@ -271,10 +273,10 @@ class OutputTests(unittest.TestCase):
             for delta, passes in ((0, True), (-1, False)):
                 service, _ = self.service(settings=Settings(max_output_bytes=length + OUTPUT_ENVELOPE_HEADROOM + delta))
                 if passes:
-                    self.assertEqual(service.handle({"input": inputs}), result)
+                    self.assertEqual(service._check_output_size(result), length)
                 else:
                     with self.assertRaises(InputError):
-                        service.handle({"input": inputs})
+                        service._check_output_size(result)
 
     def test_png_bound_covers_real_flat_and_high_entropy_encodings(self):
         for size in ((1, 1), (256, 256), (512, 256), (2752, 32), (32, 4096), (1024, 1024)):
@@ -297,7 +299,7 @@ class OutputTests(unittest.TestCase):
 class ContainerContextTests(unittest.TestCase):
     def test_required_sources_survive_dockerignore_and_private_files_do_not(self):
         text = (Path(__file__).resolve().parents[1] / ".dockerignore").read_text()
-        for path in ("qwen_worker/preflight.py", "qwen_worker/output_budget.py", "scripts/benchmark_vram.py",
+        for path in ("qwen_worker/preflight.py", "qwen_worker/output_budget.py", "qwen_worker/transport.py", "scripts/benchmark_vram.py",
                      "scripts/vram_matrix.py", "docs/vram/fixture.json", "docs/qwen-image-2.1-spec.json"):
             self.assertTrue(docker_context_includes(path, text), path)
         for path in (".env", "notes.md", ".local-dev/verify-env/python.exe", "outputs/private.json"):

@@ -1,6 +1,5 @@
 """Request orchestration, independent of GPU loading so it can be tested on CPU."""
 
-import json
 import logging
 import threading
 import time
@@ -12,6 +11,7 @@ from qwen_worker.images import decode_images, encode_image
 from qwen_worker.memory import GIB, MemoryEstimate, estimate, text_token_bound
 from qwen_worker.output_budget import parallel_output_fits
 from qwen_worker.requests import MAX_SEED, GenerationRequest, InputError
+from qwen_worker.transport import MAX_INLINE_BYTES, fit_output, json_bytes
 
 logger = logging.getLogger("qwen_worker.service")
 OUTPUT_ENVELOPE_HEADROOM = 4096
@@ -76,28 +76,36 @@ class ImageService:
                     need.kv_cache_bytes / GIB, need.parallel_kv_cache_bytes / GIB)
         return need, can_parallel
 
-    def _check_output_size(self, result: dict) -> None:
+    def _check_output_size(self, result: dict) -> int:
         # Restore the documented original cap with headroom for Runpod's envelope
         # and the final timing field. Measure JSON bytes, not container size.
-        size = len(json.dumps(result, ensure_ascii=True).encode("utf-8"))
-        if size > self.settings.max_output_bytes - OUTPUT_ENVELOPE_HEADROOM:
+        size = json_bytes(result)
+        if size > min(self.settings.max_output_bytes, MAX_INLINE_BYTES) - OUTPUT_ENVELOPE_HEADROOM:
             raise InputError(
                 "Encoded images exceed the inline output limit. Use fewer images, "
                 "smaller dimensions, or JPEG when transparency is not required."
             )
+        return size
 
-    def _append_images(self, result: dict, output, seeds: list[int], request: GenerationRequest) -> None:
+    def _fit_output(self, result: dict, originals: list, request: GenerationRequest) -> int:
+        budget = min(self.settings.max_output_bytes, MAX_INLINE_BYTES) - OUTPUT_ENVELOPE_HEADROOM
+        fit_output(result, originals, request, budget)
+        return self._check_output_size(result)
+
+    def _append_images(self, result: dict, output, seeds: list[int], request: GenerationRequest, originals: list) -> None:
         images = getattr(output, "images", None)
         if images is None or len(images) != len(seeds):
             actual = None if images is None else len(images)
             raise RuntimeError(f"Pipeline returned {actual} images; expected {len(seeds)}")
         started = time.perf_counter()
         for image, seed in zip(images, seeds):
+            originals.append((image.copy(), seed))
             result["images"].append(encode_image(image, request.output_format, request.quality, seed))
-            self._check_output_size(result)
+        self._fit_output(result, originals, request)
         logger.info("Output encoding: %d image(s), %.3fs", len(seeds), time.perf_counter() - started)
 
     def handle(self, job: dict) -> dict:
+        job_started = time.perf_counter()
         if not isinstance(job, dict):
             raise InputError("job must contain an input object")
         request = GenerationRequest.parse(job.get("input", {}))
@@ -124,24 +132,39 @@ class ImageService:
             "images": [],
         }
         started = time.perf_counter()
+        job_id = job.get("id", "unspecified_job")
+        route = "not started"
+        stats = None
+        inference_seconds = encoding_seconds = 0.0
+        response_bytes = 0
+        succeeded = False
+        originals = []
         with self._lock:
-            logger.info("Inference lock wait: %.3fs", time.perf_counter() - started)
+            lock_wait = time.perf_counter() - started
+            logger.info("[JOB %s] Inference lock acquired after %.3fs", job_id, lock_wait)
             try:
+                # A broken deployment limit must fail before any GPU work.
+                self._check_output_size({**result, "inference_seconds": 0.0})
                 if self.preflight is not None:
                     self.preflight(request, references)
                 # Observe available memory only after the previous job has
                 # relinquished the shared mutable pipeline.
                 _, can_parallel = self.check_memory(request, references)
                 if can_parallel and not parallel_output_fits(
-                    request, result, self.settings.max_output_bytes, OUTPUT_ENVELOPE_HEADROOM
+                    request, result, min(self.settings.max_output_bytes, MAX_INLINE_BYTES), OUTPUT_ENVELOPE_HEADROOM
                 ):
                     can_parallel = False
                     logger.info("Using sequential outputs: inline transport fit is uncertain; check each output before the next")
+                route = "parallel" if can_parallel else "sequential"
+                logger.info("[JOB %s] GENERATION START: route=%s, outputs=%d, steps=%d, offload=%s",
+                            job_id, route, request.num_images, request.steps, self.settings.offload)
                 context = self.job_context() if self.job_context is not None else nullcontext()
-                with context:
+                with context as stats:
                     seeds = [(request.seed + index) % (MAX_SEED + 1) for index in range(request.num_images)]
                     groups = [seeds] if can_parallel else [[seed] for seed in seeds]
-                    for group in groups:
+                    for index, group in enumerate(groups, 1):
+                        logger.info("[JOB %s] Generation pass %d/%d: %d image(s), seeds=%s",
+                                    job_id, index, len(groups), len(group), group)
                         call_kwargs = dict(kwargs)
                         if can_parallel:
                             # Encode a scalar prompt once, then repeat embeddings.
@@ -150,19 +173,41 @@ class ImageService:
                         else:
                             generator = self.generator_factory(group[0])
                         inference_at = time.perf_counter()
-                        output = self.pipeline(**call_kwargs, generator=generator)
-                        logger.info("Pipeline call: outputs=%d, elapsed=%.3fs", len(group), time.perf_counter() - inference_at)
-                        self._append_images(result, output, group, request)
-                        del output
+                        try:
+                            output = self.pipeline(**call_kwargs, generator=generator)
+                        finally:
+                            call_seconds = time.perf_counter() - inference_at
+                            inference_seconds += call_seconds
+                        logger.info("[JOB %s] Generation pass %d/%d finished: images=%d, elapsed=%.3fs",
+                                    job_id, index, len(groups), len(group), call_seconds)
+                        encoding_at = time.perf_counter()
+                        try:
+                            self._append_images(result, output, group, request, originals)
+                        finally:
+                            encoding_seconds += time.perf_counter() - encoding_at
+                            del output
+                        if len(result["images"]) < len(originals):
+                            logger.warning("[JOB %s] Partial delivery: keeping %d of %d generated images; "
+                                           "remaining generation passes skipped to avoid wasting compute",
+                                           job_id, len(result["images"]), len(originals))
+                            break
                 # Errors (including OOM) propagate to the existing handler;
                 # retries here retain failed tensors and hide deterministic bugs.
+                result["inference_seconds"] = round(time.perf_counter() - started, 3)
+                response_bytes = self._fit_output(result, originals, request)
+                succeeded = True
             finally:
                 if self.release_memory is not None:
                     try:
                         self.release_memory()
                     except Exception:
                         logger.exception("Post-job memory cleanup failed")
-        result["inference_seconds"] = round(time.perf_counter() - started, 3)
-        self._check_output_size(result)
-        logger.info("Job complete: %d image(s), %.3fs", len(result["images"]), result["inference_seconds"])
+                peaks = ("allocated=%.2f GiB, reserved=%.2f GiB" % (stats["allocated"] / GIB, stats["reserved"] / GIB)
+                         if isinstance(stats, dict) and {"allocated", "reserved"} <= stats.keys() else "unavailable")
+                logger.log(logging.INFO if succeeded else logging.WARNING,
+                           "[JOB %s] %s: route=%s, images=%d/%d, elapsed=%.3fs, lock_wait=%.3fs, "
+                           "pipeline=%.3fs, encoding=%.3fs, peak VRAM %s, response=%d bytes",
+                           job_id, "COMPLETE" if succeeded else "FAILED", route, len(result["images"]),
+                           request.num_images, time.perf_counter() - job_started, lock_wait,
+                           inference_seconds, encoding_seconds, peaks, response_bytes)
         return result

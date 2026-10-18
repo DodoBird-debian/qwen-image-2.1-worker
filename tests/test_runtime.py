@@ -3,6 +3,7 @@
 import json
 import errno
 import os
+import runpy
 import sys
 import tempfile
 import unittest
@@ -163,7 +164,7 @@ class SnapshotTests(unittest.TestCase):
         path = self.root / "partial"
         path.mkdir()
         (path / "model_index.json").write_text('{"_class_name":"QwenImage21Pipeline"}')
-        with self.assertRaisesRegex(ValueError, "no processor"):
+        with self.assertRaisesRegex(runtime.ModelCacheError, "no processor"):
             runtime.download_model(Settings(model_path=str(path)))
 
     def test_wrong_pipeline_class_is_rejected(self):
@@ -199,6 +200,53 @@ class SnapshotTests(unittest.TestCase):
         make_snapshot(self.model_cache / "snapshots" / ("a" * 40))
         with patch.object(runtime, "configure_cache", return_value=self.root), patch.object(runtime, "_cache_roots", return_value=[self.cache]):
             self.assertEqual(runtime.download_model(Settings()), str(exact))
+
+    def test_serving_refuses_missing_wrong_incomplete_or_broken_cache_without_downloads(self):
+        wrong = make_snapshot(self.model_cache / "snapshots" / ("a" * 40))
+        for state in ("missing", "empty", "incomplete", "broken"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as temp:
+                cache = Path(temp) / "absent-mount" / "hub"
+                snapshot = cache / self.model_cache.name / "snapshots" / MODEL_REVISION
+                if state == "empty":
+                    snapshot.mkdir(parents=True)
+                elif state in {"incomplete", "broken"}:
+                    make_snapshot(snapshot)
+                    shard = snapshot / "transformer" / "model.safetensors"
+                    shard.unlink()
+                    if state == "broken":
+                        shard.symlink_to(Path(temp) / "unmounted-blobs" / "weight")
+                download = Mock(side_effect=AssertionError("must not download"))
+                with patch.object(runtime, "configure_cache", return_value=cache.parent), \
+                        patch.object(runtime, "_cache_roots", return_value=[cache, wrong.parents[2]]), \
+                        patch.object(Path, "mkdir", side_effect=AssertionError("must not write")), \
+                        patch.object(runtime, "download_model", side_effect=AssertionError("serving cannot provision")), \
+                        patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+                    with self.assertRaisesRegex(runtime.ModelCacheError, "Downloads are disabled"):
+                        runtime.load_service(Settings())
+                download.assert_not_called()
+
+    def test_cached_only_resolution_requires_complete_explicit_path(self):
+        with self.assertRaisesRegex(runtime.ModelCacheError, "Invalid cached MODEL_PATH"):
+            runtime.resolve_cached_model(Settings(model_path=str(self.root / "missing")))
+
+    def test_previously_provisioned_fallback_is_a_known_cache(self):
+        self.assertIn(runtime.FALLBACK_HUB_CACHE, runtime._cache_roots(self.root))
+
+    def test_container_entrypoint_panics_before_gpu_imports_or_queue_registration(self):
+        start = Mock()
+        real_import = __import__
+        def guarded_import(name, *args, **kwargs):
+            if name.split(".")[0] in {"torch", "diffusers", "huggingface_hub"}:
+                raise AssertionError(f"must fail before importing {name}")
+            return real_import(name, *args, **kwargs)
+        with patch.dict(os.environ, {}, clear=True), patch.object(sys, "argv", ["handler.py"]), \
+                patch.dict(sys.modules, {"runpod": SimpleNamespace(serverless=SimpleNamespace(start=start))}), \
+                patch.object(runtime, "configure_cache", return_value=self.root), \
+                patch.object(runtime, "_cache_roots", return_value=[self.cache]), \
+                patch("builtins.__import__", side_effect=guarded_import):
+            with self.assertRaisesRegex(runtime.ModelCacheError, "Downloads are disabled"):
+                runpy.run_path(str(Path(__file__).resolve().parents[1] / "handler.py"), run_name="__main__")
+        start.assert_not_called()
 
     def test_wrong_revision_is_never_selected(self):
         make_snapshot(self.model_cache / "snapshots" / ("a" * 40))
@@ -386,9 +434,12 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 events.append("reference_vae")
                 return None
 
-            def __call__(self, prompt):
+            def __call__(self, prompt, callback_on_step_end, callback_on_step_end_tensor_inputs):
                 self._get_qwen_prompt_embeds(prompt, None, "cuda")
                 self.prepare_latents(None, 1, 64, 32, 32, "bf16", "cuda", None)
+                self.callback_inputs = callback_on_step_end_tensor_inputs
+                for step in range(40):
+                    self.callback_result = callback_on_step_end(self, step, None, {})
                 return SimpleNamespace(images=[])
 
             def maybe_free_model_hooks(self):
@@ -398,14 +449,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
                                device_count=lambda: 1, get_device_name=lambda index: "mock GPU",
                                get_device_capability=lambda index: (8, 0), mem_get_info=lambda *args: (100, 200),
                                memory_allocated=lambda: 20, memory_reserved=lambda: 30,
-                               reset_peak_memory_stats=lambda: None, max_memory_allocated=lambda: 50,
+                               reset_peak_memory_stats=lambda: events.append("reset_peaks"), max_memory_allocated=lambda: 50,
                                max_memory_reserved=lambda: 60,
                                empty_cache=lambda: events.append("empty_cache"), ipc_collect=lambda: None)
         torch = SimpleNamespace(__version__="mock", version=SimpleNamespace(cuda="mock"),
                                 backends=SimpleNamespace(cudnn=SimpleNamespace(version=lambda: 0)),
                                 cuda=cuda, set_num_threads=lambda threads: None, bfloat16="bf16",
                                 inference_mode=nullcontext)
-        with patch.dict(sys.modules, {"torch": torch, "diffusers": SimpleNamespace(QwenImage21Pipeline=FakePipeline)}), patch.object(runtime, "configure_cache"), patch.object(runtime, "download_model", return_value="mock"), patch.object(runtime, "RequestPreflight", return_value=Mock()) as preflight:
+        with patch.dict(os.environ), patch.dict(sys.modules, {"torch": torch, "diffusers": SimpleNamespace(QwenImage21Pipeline=FakePipeline)}), patch.object(runtime, "resolve_cached_model", return_value="mock"), patch.object(runtime, "RequestPreflight", return_value=Mock()) as preflight:
             service = runtime.load_service(settings or Settings())
         self.assertIs(service.preflight, preflight.return_value)
         events.clear()
@@ -435,6 +486,20 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(pipeline.text_encoder.tensor.device.type, "cpu")
         self.assertIn("clear_vae", events)
         self.assertIn("free_hooks", events)
+
+    def test_progress_callback_does_not_transfer_tensors_and_peaks_cover_whole_job(self):
+        service, events = self.load_fake_service()
+        with self.assertLogs(runtime.logger, level="INFO") as logs:
+            with service.job_context() as stats:
+                service.pipeline(prompt="a")
+                service.pipeline(prompt="a")
+        self.assertEqual(events.count("reset_peaks"), 1)
+        self.assertEqual(stats, {"allocated": 50, "reserved": 60})
+        pipeline = next(cell.cell_contents for cell in service.pipeline.__closure__ if hasattr(cell.cell_contents, "conditioning_context"))
+        self.assertEqual(pipeline.callback_inputs, [])
+        self.assertEqual(pipeline.callback_result, {})
+        self.assertTrue(any("step 1/40" in line for line in logs.output))
+        self.assertTrue(any("step 40/40" in line for line in logs.output))
 
     def test_positional_preflight_still_runs_when_memory_guard_is_disabled(self):
         from qwen_worker.requests import InputError

@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from qwen_worker.config import Settings, configure_cache
@@ -96,6 +97,7 @@ def _cache_roots(cache: Path) -> list[Path]:
         Path("/runpod-volume/huggingface/hub"),
         Path.home() / ".cache" / "huggingface" / "hub",
         Path("/opt/huggingface/hub"),
+        FALLBACK_HUB_CACHE,
     ]))
 
 
@@ -116,10 +118,18 @@ def _cached_snapshot(base: Path, settings: Settings) -> Path | None:
     return model_cache / "snapshots" / revision
 
 
-def download_model(settings: Settings) -> str:
+class ModelCacheError(RuntimeError):
+    """Startup cannot proceed without a complete, already provisioned snapshot."""
+
+
+def resolve_cached_model(settings: Settings) -> str:
+    """Read-only resolution. Production startup must never download weights."""
     if settings.model_path:
         model_path = Path(settings.model_path)
-        _validate_snapshot(model_path)
+        try:
+            _validate_snapshot(model_path)
+        except (ValueError, OSError) as exc:
+            raise ModelCacheError(f"Invalid cached MODEL_PATH {model_path}: {exc}. Downloads are disabled at worker startup.") from exc
         logger.info("[MODEL RESOLVER] Using validated explicit MODEL_PATH: %s", model_path)
         return str(model_path)
 
@@ -130,12 +140,28 @@ def download_model(settings: Settings) -> str:
             continue
         try:
             _validate_snapshot(snapshot)
-        except ValueError as exc:
+        except (ValueError, OSError) as exc:
             logger.warning("[MODEL RESOLVER] Incomplete requested snapshot: %s", exc)
             continue
         logger.info("[MODEL RESOLVER] Exact requested revision cache hit: %s", snapshot)
         return str(snapshot)
 
+    searched = ", ".join(str(base) for base in _cache_roots(cache))
+    raise ModelCacheError(
+        f"Required cached model is missing or incomplete: {settings.model_id}@{settings.model_revision}. "
+        f"Searched: {searched}. Downloads are disabled at worker startup. "
+        "Check the model/volume mount and exact revision, or provision it beforehand with scripts/download_model.py."
+    )
+
+
+def download_model(settings: Settings) -> str:
+    """Explicit provisioning command only; never called by the serving runtime."""
+    try:
+        return resolve_cached_model(settings)
+    except ModelCacheError:
+        if settings.model_path:
+            raise
+    cache = configure_cache()
     from huggingface_hub import snapshot_download
 
     logger.info("[MODEL RESOLVER] Resolving requested Hub snapshot: %s (%s)", settings.model_id, settings.model_revision)
@@ -233,7 +259,18 @@ def _phase_tensor_budgets(pipe, torch, offload: str, component_bytes: dict[str, 
 
 
 def load_service(settings: Settings) -> ImageService:
-    configure_cache()
+    t_resolve = time.perf_counter()
+    logger.info("[STARTUP] Checking required cached model; automatic downloads DISABLED")
+    try:
+        source = resolve_cached_model(settings)
+    except ModelCacheError:
+        logger.critical("[STARTUP FATAL] Cached model unavailable; refusing to accept jobs", exc_info=True)
+        raise
+    logger.info("[STARTUP] Cached snapshot validated in %.3fs: %s", time.perf_counter() - t_resolve, source)
+    # Belt and suspenders: component loaders are local-only and Hub clients are
+    # offline even if an upstream loader attempts an incidental metadata fetch.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     import torch
     from diffusers import QwenImage21Pipeline
     from qwen_worker.conditioning import make_pipeline_class
@@ -290,7 +327,7 @@ def load_service(settings: Settings) -> ImageService:
         if p.exists():
             try:
                 du = shutil.disk_usage(p)
-                logger.info("   * %s: Mounted / Available (Free: %.1f GB, Total: %.1f GB)", path_str, du.free / (1000**3), du.total / (1000**3))
+                logger.info("   * %s: directory available, mount point=%s (Free: %.1f GB, Total: %.1f GB)", path_str, p.is_mount(), du.free / (1000**3), du.total / (1000**3))
             except OSError:
                 logger.info("   * %s: Exists", path_str)
         else:
@@ -309,10 +346,7 @@ def load_service(settings: Settings) -> ImageService:
     # =========================================================================
     # MODEL LOADING
     # =========================================================================
-    t_resolve = time.perf_counter()
-    logger.info(">>> Step 1/3: Resolving model snapshot...")
-    source = download_model(settings)
-    logger.info("<<< Step 1/3 Completed: Model source ready in %.2fs from '%s'", time.perf_counter() - t_resolve, source)
+    logger.info("<<< Step 1/3: Required cached snapshot already validated: %s (offline)", source)
 
     logger.info(">>> Step 2/3: Loading Diffusers QwenImage21Pipeline (torch_dtype=bfloat16)...")
     t_pipe = time.perf_counter()
@@ -382,12 +416,28 @@ def load_service(settings: Settings) -> ImageService:
     pipe.set_progress_bar_config(disable=True)
 
     def infer(**kwargs):
-        # ImageService calls this under its inference lock. Diagnostics must not
-        # turn a usable inference path into an error or hide the original error.
-        try:
-            torch.cuda.reset_peak_memory_stats()
-        except Exception:
-            logger.warning("Could not reset CUDA memory peak counters", exc_info=True)
+        started = time.perf_counter()
+        last_logged = started
+        total_steps = kwargs.get("num_inference_steps", 40)
+
+        def log_step(_pipe, step, _timestep, callback_kwargs):
+            nonlocal last_logged
+            now = time.perf_counter()
+            done = step + 1
+            if done == 1 or done == total_steps or now - last_logged >= 5:
+                elapsed = now - started
+                logger.info("[DENOISING] step %d/%d (%.0f%%), pipeline elapsed=%.2fs, estimated remaining=%.2fs",
+                            done, total_steps, 100 * done / total_steps,
+                            elapsed, elapsed / done * max(0, total_steps - done))
+                last_logged = now
+            if done == total_steps:
+                logger.info("[DECODING] Denoising complete; decoding %d generated image(s)",
+                            kwargs.get("num_images_per_prompt", 1))
+            return callback_kwargs
+
+        # Empty tensor inputs keep logging off the tensor/CPU transfer path.
+        kwargs["callback_on_step_end"] = log_step
+        kwargs["callback_on_step_end_tensor_inputs"] = []
         try:
             with torch.inference_mode():
                 return pipe(**kwargs)
@@ -401,7 +451,7 @@ def load_service(settings: Settings) -> ImageService:
             raise
         finally:
             try:
-                logger.info("Pipeline CUDA peaks: allocated %.2f GiB, reserved %.2f GiB",
+                logger.info("Job CUDA peaks so far: allocated %.2f GiB, reserved %.2f GiB",
                             torch.cuda.max_memory_allocated() / (1024**3),
                             torch.cuda.max_memory_reserved() / (1024**3))
             except Exception:
@@ -412,6 +462,27 @@ def load_service(settings: Settings) -> ImageService:
 
     def generator(seed):
         return torch.Generator(device="cuda").manual_seed(seed)
+
+    @contextmanager
+    def job_context():
+        stats = {}
+        reset_ok = False
+        # Reset once per job, so sequential calls retain the highest peak.
+        try:
+            torch.cuda.reset_peak_memory_stats()
+            reset_ok = True
+        except Exception:
+            logger.warning("Could not reset CUDA memory peak counters", exc_info=True)
+        try:
+            with pipe.conditioning_context():
+                yield stats
+        finally:
+            try:
+                if reset_ok:
+                    stats["allocated"] = torch.cuda.max_memory_allocated()
+                    stats["reserved"] = torch.cuda.max_memory_reserved()
+            except Exception:
+                logger.warning("Could not read CUDA memory peak counters", exc_info=True)
 
     def get_memory_budget() -> int:
         if not torch.cuda.is_available() or not settings.memory_guard:
@@ -437,7 +508,7 @@ def load_service(settings: Settings) -> ImageService:
         memory_budget=get_memory_budget if settings.memory_guard else None,
         phase_budgets=get_phase_budgets if settings.memory_guard else None,
         release_memory=release_memory,
-        job_context=pipe.conditioning_context,
+        job_context=job_context,
         preflight=preflight,
     )
 
