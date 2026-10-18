@@ -475,6 +475,16 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(encode_events[0][1], {"output_hidden_states": True, "logits_to_keep": 1, "use_cache": False})
         self.assertEqual(service.phase_budgets(), {"conditioning": 80, "denoising": 110, "decoding": 110})
 
+    def test_startup_summary_separates_loading_stages_and_fingerprints_source(self):
+        with self.assertLogs(runtime.logger, level="INFO") as logs:
+            self.load_fake_service()
+        summary = next(line for line in logs.output if "[STARTUP SUMMARY]" in line)
+        for field in ("cache=", "imports=", "device/diagnostics=", "model_load=", "placement=", "service_total=", "source="):
+            self.assertIn(field, summary)
+        fingerprint = runtime.source_fingerprint()
+        self.assertRegex(fingerprint, r"^[0-9a-f]{16}$")
+        self.assertEqual(fingerprint, runtime.source_fingerprint())
+
     def test_encoder_failure_releases_placement_and_job_cache(self):
         service, events = self.load_fake_service()
         # The infer closure captures the derived pipeline instance.

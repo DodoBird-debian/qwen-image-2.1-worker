@@ -1,6 +1,7 @@
 """GPU initialization performed once, before the Runpod worker starts accepting jobs."""
 
 import logging
+import hashlib
 import errno
 import inspect
 import json
@@ -19,6 +20,20 @@ from qwen_worker.preflight import RequestPreflight
 
 logger = logging.getLogger("qwen_worker.runtime")
 FALLBACK_HUB_CACHE = Path("/cache/huggingface/hub")
+
+
+def source_fingerprint() -> str:
+    """Identify deployed source without a Git checkout or reading model weights."""
+    root = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha256()
+    try:
+        paths = [root / "handler.py", root / "requirements.txt", *sorted((root / "qwen_worker").glob("*.py"))]
+        for path in paths:
+            digest.update(path.name.encode("utf-8"))
+            digest.update(path.read_bytes())
+    except OSError:
+        return "unavailable"
+    return digest.hexdigest()[:16]
 
 
 def _format_bytes(size_bytes: int) -> str:
@@ -266,14 +281,19 @@ def load_service(settings: Settings) -> ImageService:
     except ModelCacheError:
         logger.critical("[STARTUP FATAL] Cached model unavailable; refusing to accept jobs", exc_info=True)
         raise
-    logger.info("[STARTUP] Cached snapshot validated in %.3fs: %s", time.perf_counter() - t_resolve, source)
+    cache_seconds = time.perf_counter() - t_resolve
+    logger.info("[STARTUP] Cached snapshot validated in %.3fs: %s", cache_seconds, source)
     # Belt and suspenders: component loaders are local-only and Hub clients are
     # offline even if an upstream loader attempts an incidental metadata fetch.
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    t_import = time.perf_counter()
     import torch
     from diffusers import QwenImage21Pipeline
     from qwen_worker.conditioning import make_pipeline_class
+    import_seconds = time.perf_counter() - t_import
+    logger.info("[STARTUP] Torch/Diffusers/adapter imports=%.3fs", import_seconds)
+    t_device = time.perf_counter()
 
     # =========================================================================
     # SYSTEM DIAGNOSTICS BANNER
@@ -348,6 +368,7 @@ def load_service(settings: Settings) -> ImageService:
     # =========================================================================
     logger.info("<<< Step 1/3: Required cached snapshot already validated: %s (offline)", source)
 
+    device_seconds = time.perf_counter() - t_device
     logger.info(">>> Step 2/3: Loading Diffusers QwenImage21Pipeline (torch_dtype=bfloat16)...")
     t_pipe = time.perf_counter()
     pipeline_class = make_pipeline_class(QwenImage21Pipeline)
@@ -364,8 +385,10 @@ def load_service(settings: Settings) -> ImageService:
     for name, size in component_bytes.items():
         logger.info("   * Loaded %s parameters and buffers: %s", name, _format_bytes(size))
     logger.info("<<< Step 2/3 Completed: Pipeline components instantiated in %.2fs", time.perf_counter() - t_pipe)
+    load_seconds = time.perf_counter() - t_pipe
 
     logger.info(">>> Step 3/3: Applying hardware placement & memory offload strategy...")
+    t_placement = time.perf_counter()
     if settings.vae_tiling:
         pipe.vae.enable_tiling()
         logger.info("   * VAE tiling enabled for large-resolution decoding memory optimization.")
@@ -411,6 +434,10 @@ def load_service(settings: Settings) -> ImageService:
     logger.info("=" * 80)
     logger.info(">>> QWEN-IMAGE-2.1 SERVICE READY TO SERVE RUNPOD SERVERLESS JOBS <<<")
     logger.info("    Baseline GPU VRAM: %.2f GiB Allocated | %.2f GiB Reserved | %.2f GiB Free", alloc_mem, reserved_mem, free_gib_after)
+    logger.info("[STARTUP SUMMARY] cache=%.3fs, imports=%.3fs, device/diagnostics=%.3fs, "
+                "model_load=%.3fs, placement=%.3fs, service_total=%.3fs; source=%s",
+                cache_seconds, import_seconds, device_seconds, load_seconds,
+                time.perf_counter() - t_placement, time.perf_counter() - t_resolve, source_fingerprint())
     logger.info("=" * 80)
 
     pipe.set_progress_bar_config(disable=True)

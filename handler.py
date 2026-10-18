@@ -1,5 +1,9 @@
 """Runpod queue entrypoint; load a single pipeline before accepting jobs."""
 
+import time
+
+_PROCESS_STARTED = time.perf_counter()
+
 import argparse
 import base64
 import json
@@ -7,13 +11,7 @@ import logging
 import os
 import sys
 import threading
-import time
 from pathlib import Path
-
-try:
-    import runpod
-except ImportError:
-    runpod = None
 
 # Runtime resolves the required local snapshot before importing GPU libraries.
 torch = None
@@ -40,10 +38,19 @@ logging.basicConfig(
     force=True,
 )
 logger = logging.getLogger("qwen_worker.handler")
+logger.info("[STARTUP] Python process started; measuring container-side initialization")
+_sdk_started = time.perf_counter()
+try:
+    import runpod
+except ImportError:
+    runpod = None
+logger.info("[STARTUP] RunPod SDK import=%.3fs; process elapsed=%.3fs",
+            time.perf_counter() - _sdk_started, time.perf_counter() - _PROCESS_STARTED)
 
 from qwen_worker.config import Settings
 from qwen_worker.requests import InputError
-from qwen_worker.runtime import load_service
+from qwen_worker.runtime import load_service, source_fingerprint
+logger.info("[STARTUP] Worker source fingerprint=%s", source_fingerprint())
 
 _service = None
 _service_lock = threading.Lock()
@@ -59,6 +66,8 @@ def get_service():
                 _service = load_service(Settings.from_env())
                 torch = sys.modules.get("torch")
                 logger.info("[INIT] Service initialization completed in %.2fs. Listening for RunPod serverless jobs.", time.perf_counter() - t0)
+                logger.info("[STARTUP] Process-to-service-ready=%.3fs. RunPod queue/allocation time before process launch is not included.",
+                            time.perf_counter() - _PROCESS_STARTED)
     return _service
 
 

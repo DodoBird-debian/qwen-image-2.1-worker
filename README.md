@@ -184,6 +184,12 @@ queue registration; correct the mount/revision before restarting workers.
 
 ### Generation logs
 
+Startup now logs SDK/library imports, cache validation, GPU setup, loading,
+placement, process-to-ready time, and a source fingerprint. See
+[cold-start findings and options](docs/cold-start.md) to distinguish container
+initialization from Runpod queue/allocation delays. These are diagnostic changes;
+no reduction in production cold-start time has been demonstrated here.
+
 Each job logs dimensions, references, actual sequential/parallel routing, CPU
 offload mode, pass number, and seeds. Denoising logs the first/last step and at
 most one update per five seconds between them, with progress, elapsed time and an
