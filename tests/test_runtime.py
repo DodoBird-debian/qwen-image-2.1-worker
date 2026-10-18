@@ -248,6 +248,89 @@ class SnapshotTests(unittest.TestCase):
                 runpy.run_path(str(Path(__file__).resolve().parents[1] / "handler.py"), run_name="__main__")
         start.assert_not_called()
 
+    def test_hub_provisioning_requires_explicit_flag_even_in_local_simulator(self):
+        settings = Settings()
+        for env in ({}, {"QWEN_HUB_TEST_PROVISION": "false"}, {"RUNPOD_ENDPOINT_ID": "IDE"}):
+            with self.subTest(env=env), patch.dict(os.environ, env, clear=True), \
+                    patch.object(runtime, "download_model") as download:
+                self.assertIs(runtime.prepare_hub_test_model(settings), settings)
+            download.assert_not_called()
+
+    def test_hub_provisioning_rejects_misspelled_flag_without_downloading(self):
+        with patch.dict(os.environ, {"QWEN_HUB_TEST_PROVISION": "yes"}, clear=True), \
+                patch.object(runtime, "download_model") as download:
+            with self.assertRaisesRegex(ValueError, "must be true or false"):
+                runtime.prepare_hub_test_model(Settings())
+        download.assert_not_called()
+
+    def test_hub_test_downloads_exact_revision_then_loads_locally_before_queue_registration(self):
+        events = []
+        exact = self.model_cache / "snapshots" / MODEL_REVISION
+        def snapshot_download(**kwargs):
+            self.assertEqual(kwargs["revision"], MODEL_REVISION)
+            self.assertEqual(kwargs["repo_id"], "Qwen/Qwen-Image-2.1")
+            events.append("download")
+            return str(make_snapshot(exact))
+        download = Mock(side_effect=snapshot_download)
+        service = SimpleNamespace(handle=Mock(return_value={"images": []}))
+        def load(settings):
+            events.append("load")
+            self.assertEqual(runtime.resolve_cached_model(settings), str(exact))
+            return service
+        def register(config):
+            events.append("queue")
+            # Warm jobs use the already-loaded service, not the downloader.
+            for _ in range(2):
+                config["handler"]({"id": "test", "input": {"prompt": "cube"}})
+        start = Mock(side_effect=register)
+        with patch.dict(os.environ, {"QWEN_HUB_TEST_PROVISION": "true"}, clear=True), \
+                patch.object(sys, "argv", ["handler.py"]), \
+                patch.dict(sys.modules, {"runpod": SimpleNamespace(serverless=SimpleNamespace(start=start)),
+                                         "huggingface_hub": SimpleNamespace(snapshot_download=download)}), \
+                patch.object(runtime, "configure_cache", return_value=self.root), \
+                patch.object(runtime, "_cache_roots", return_value=[self.cache]), \
+                patch.object(runtime, "load_service", side_effect=load):
+            runpy.run_path(str(Path(__file__).resolve().parents[1] / "handler.py"), run_name="__main__")
+        self.assertEqual(events, ["download", "load", "queue"])
+        download.assert_called_once()
+        start.assert_called_once()
+        self.assertEqual(service.handle.call_count, 2)
+
+    def test_hub_provisioning_cache_hit_needs_no_network(self):
+        exact = make_snapshot(self.model_cache / "snapshots" / MODEL_REVISION)
+        download = Mock(side_effect=AssertionError("complete cache needs no download"))
+        with patch.dict(os.environ, {"QWEN_HUB_TEST_PROVISION": "true"}, clear=True), \
+                patch.object(runtime, "configure_cache", return_value=self.root), \
+                patch.object(runtime, "_cache_roots", return_value=[self.cache]), \
+                patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
+            prepared = runtime.prepare_hub_test_model(Settings(offload="model"))
+        self.assertEqual(prepared.model_path, str(exact))
+        self.assertEqual(prepared.offload, "model")
+        download.assert_not_called()
+
+    def test_failed_test_provisioning_never_loads_gpu_or_registers_queue(self):
+        start = Mock()
+        with patch.dict(os.environ, {"QWEN_HUB_TEST_PROVISION": "true"}, clear=True), \
+                patch.object(sys, "argv", ["handler.py"]), \
+                patch.dict(sys.modules, {"runpod": SimpleNamespace(serverless=SimpleNamespace(start=start))}), \
+                patch.object(runtime, "download_model", side_effect=ConnectionError("download failed")) as download, \
+                patch.object(runtime, "load_service") as load:
+            with self.assertRaisesRegex(ConnectionError, "download failed"):
+                runpy.run_path(str(Path(__file__).resolve().parents[1] / "handler.py"), run_name="__main__")
+        download.assert_called_once()
+        load.assert_not_called()
+        start.assert_not_called()
+
+    def test_hub_test_flag_is_only_set_in_test_metadata(self):
+        root = Path(__file__).resolve().parents[1]
+        tests = json.loads((root / ".runpod" / "tests.json").read_text())
+        hub = json.loads((root / ".runpod" / "hub.json").read_text())
+        test_env = {entry["key"]: entry.get("value") for entry in tests["config"]["env"]}
+        self.assertEqual(test_env["QWEN_HUB_TEST_PROVISION"], "true")
+        self.assertEqual(test_env["MODEL_REVISION"], MODEL_REVISION)
+        self.assertNotIn("QWEN_HUB_TEST_PROVISION", {entry["key"] for entry in hub["config"]["env"]})
+        self.assertNotIn("QWEN_HUB_TEST_PROVISION", (root / "Dockerfile").read_text())
+
     def test_wrong_revision_is_never_selected(self):
         make_snapshot(self.model_cache / "snapshots" / ("a" * 40))
         downloaded = make_snapshot(self.root / "downloaded")

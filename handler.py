@@ -49,7 +49,7 @@ logger.info("[STARTUP] RunPod SDK import=%.3fs; process elapsed=%.3fs",
 
 from qwen_worker.config import Settings
 from qwen_worker.requests import InputError
-from qwen_worker.runtime import load_service, source_fingerprint
+from qwen_worker.runtime import load_service, prepare_hub_test_model, source_fingerprint
 logger.info("[STARTUP] Worker source fingerprint=%s", source_fingerprint())
 
 _service = None
@@ -63,7 +63,8 @@ def get_service():
             if _service is None:
                 logger.info("[INIT] Initializing Qwen-Image-2.1 service runtime...")
                 t0 = time.perf_counter()
-                _service = load_service(Settings.from_env())
+                settings = prepare_hub_test_model(Settings.from_env())
+                _service = load_service(settings)
                 torch = sys.modules.get("torch")
                 logger.info("[INIT] Service initialization completed in %.2fs. Listening for RunPod serverless jobs.", time.perf_counter() - t0)
                 logger.info("[STARTUP] Process-to-service-ready=%.3fs. RunPod queue/allocation time before process launch is not included.",

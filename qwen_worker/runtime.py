@@ -12,6 +12,7 @@ import shutil
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 from qwen_worker.config import Settings, configure_cache
@@ -205,6 +206,29 @@ def download_model(settings: Settings) -> str:
     _validate_snapshot(Path(downloaded_path))
     logger.info("[MODEL RESOLVER] Snapshot ready in %.2fs: %s", time.perf_counter() - started, downloaded_path)
     return downloaded_path
+
+
+def prepare_hub_test_model(settings: Settings) -> Settings:
+    """Explicit Hub-test provisioning before the unchanged cache-only loader.
+
+    Only .runpod/tests.json enables this exception. Never infer permission from
+    a missing cache, a job input, or the SDK's local/test endpoint identifiers.
+    """
+    enabled = os.environ.get("QWEN_HUB_TEST_PROVISION", "false").lower()
+    if enabled not in {"true", "false"}:
+        raise ValueError("QWEN_HUB_TEST_PROVISION must be true or false")
+    if enabled == "false":
+        return settings
+    logger.warning(
+        "[HUB TEST PROVISION] Explicit test-only downloads ENABLED for %s@%s. "
+        "Do not enable QWEN_HUB_TEST_PROVISION on production endpoints. "
+        "Provisioning may take minutes on the allocated test GPU; jobs are not yet accepted.",
+        settings.model_id, settings.model_revision,
+    )
+    started = time.perf_counter()
+    source = download_model(settings)
+    logger.info("[HUB TEST PROVISION] Complete in %.2fs; entering cache-only model loading", time.perf_counter() - started)
+    return replace(settings, model_path=source)
 
 
 def _validate_architecture(pipe) -> None:

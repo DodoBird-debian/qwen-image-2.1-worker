@@ -47,6 +47,10 @@
     "gpuCount": 1,
     "env": [
       {
+        "key": "QWEN_HUB_TEST_PROVISION",
+        "value": "true"
+      },
+      {
         "key": "MODEL_ID",
         "value": "Qwen/Qwen-Image-2.1"
       },

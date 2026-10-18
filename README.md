@@ -24,7 +24,7 @@ python scripts/client.py YOUR_ENDPOINT_ID --input examples/generate.json
 
 The client submits to `/run`, waits on the returned job id, and saves images and
 metadata under `outputs/<job-id>/`. A client timeout does not cancel the remote job.
-Cold starts include pulling the container and loading the cached model. Startup
+Cold starts include pulling the container and loading the cached model. Production startup
 is strictly cache-only: a missing, incomplete, or wrong-revision snapshot is fatal,
 and no weights are downloaded by the serving process. Use `examples/smoke.json`
 for a 512×512, four-step boot test; it is not a
@@ -179,8 +179,26 @@ docker run --rm -v qwen-cache:/cache qwen-image-2.1-worker:0.0.1.2 \
 
 This command intentionally permits downloads and does not need a GPU. Set the same
 model/revision environment variables on provisioning and serving containers. The
-serving runtime never invokes this downloader. A fatal cache error exits before
-queue registration; correct the mount/revision before restarting workers.
+normal production startup never invokes this downloader. A fatal cache error exits
+before queue registration; correct the mount/revision before restarting workers.
+
+### Runpod Hub build tests
+
+The image build itself does not need model weights. The subsequent Hub GPU
+tests run in a separate test Pod and must have the checkpoint available before
+the worker can start. `.runpod/tests.json` explicitly sets
+`QWEN_HUB_TEST_PROVISION=true`: this provisions the exact test revision once,
+before cache-only model loading and queue registration. A complete cache hit
+avoids downloading again. Provisioning failures stop startup; no test output is
+fabricated and generation is not retried.
+
+This flag defaults to false and is absent from `.runpod/hub.json` and the
+Dockerfile. Leave it unset on production endpoints: a missing or incomplete
+cache must still fail immediately. Do not use the Hub-test exception as a
+production download fallback. Tests may spend GPU time downloading if their Pod
+has no cache; a separately provisioned cache avoids that cost. The test revision
+is `790c92633540aa0cb11d9abf19eb46d861714758`; an endpoint using another cached
+revision must keep its own `MODEL_REVISION` override aligned with that cache.
 
 ### Generation logs
 
