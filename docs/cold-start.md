@@ -4,15 +4,47 @@ RunPod `delayTime` includes waiting for a worker and cold startup. It is not the
 same measurement as Python initialization. [RunPod's optimization guide](https://docs.runpod.io/serverless/development/optimization)
 describes the distinction.
 
-## Evidence from this checkout and the supplied log
+## The reported 50-second interval
+
+The user identified the two system-log lines enclosing the delay:
+
+```text
+loading container image from cache
+[approximately 50 seconds]
+Loaded image: registry.runpod.net/dodobird-debian-qwen-image-2-1-worker-main-dockerfile:99c28f5d8
+```
+
+This locates that interval in RunPod's container-image preparation, before the
+worker Python process starts. It is not the Hugging Face model cache lookup or
+pipeline initialization. The exact cause within image loading remains unproven:
+these lines do not separate cache restoration, layer extraction, storage
+contention, or other host-side work. Do not label it a model download or a Python
+restart without additional evidence.
+
+The deployed tag identifies `99c28f5`; the newer local worker commits are not in
+that image. Compared with its parent `54ce8e2`, that revision keeps the same base
+image declaration and dependency pins, and adds about 600 KiB of docs and small
+diagnostic scripts plus a build-only benchmark listing. No models are baked
+into either image. This source comparison does not establish that their actual
+base/dependency layer digests or built image sizes are identical: the base tag
+is mutable and the registry manifests were not available for comparison.
+
+For this specific delay, prioritize preserving/reusing prepared workers through
+FlashBoot, and compare image digests, compressed/unpacked layer sizes, GPU host,
+region, and timestamps between a fast and slow start. Repeated slow cache loads
+with the same digest are useful evidence for a RunPod support ticket. Do not
+bake another 30 GiB of model weights into the image to address image loading.
+Shrinking the runtime image may help image preparation, but needs an actual
+layer-size comparison and GPU compatibility test before changing its base.
+
+## Other evidence from this checkout and the supplied worker log
 
 - On October 18, the supplied log reported cache resolution **0.00 s**, pipeline
   component loading **1.04 s**, and service initialization **3.41 s**.
-- Those logs do not contain the complete platform queue/allocation interval.
-  They cannot identify the cause of the reported change from 13–17 s to 30–50 s.
-- GitHub main remained `99c28f5` when checked. The later cache-only/response-fitting
-  worker changes were local at that time. A local checkout is not evidence of
-  the image RunPod is actually running; compare its source fingerprint/image tag.
+- Those worker logs do not contain the image-loading interval identified above.
+  Their short initialization duration does not explain the image-cache delay.
+- GitHub main remained `99c28f5` when checked, matching the supplied deployed tag.
+  The later cache-only/response-fitting worker changes were local at that time.
 - The current Dockerfile installs dependencies and performs import checks during
   the image build, not at worker startup. Added documentation is approximately
   600 KiB. There is no startup compilation, warm-up inference, or paid keepalive.
