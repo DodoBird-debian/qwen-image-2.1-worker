@@ -9,7 +9,6 @@ from contextlib import nullcontext
 from qwen_worker.config import Settings
 from qwen_worker.images import decode_images, encode_image
 from qwen_worker.memory import GIB, MemoryEstimate, estimate, text_token_bound
-from qwen_worker.output_budget import parallel_output_fits
 from qwen_worker.requests import MAX_SEED, GenerationRequest, InputError
 from qwen_worker.transport import MAX_INLINE_BYTES, fit_output, json_bytes
 
@@ -150,11 +149,8 @@ class ImageService:
                 # Observe available memory only after the previous job has
                 # relinquished the shared mutable pipeline.
                 _, can_parallel = self.check_memory(request, references)
-                if can_parallel and not parallel_output_fits(
-                    request, result, min(self.settings.max_output_bytes, MAX_INLINE_BYTES), OUTPUT_ENVELOPE_HEADROOM
-                ):
-                    can_parallel = False
-                    logger.info("Using sequential outputs: inline transport fit is uncertain; check each output before the next")
+                # Encoded response size is handled after inference by _fit_output;
+                # only the phase memory budgets determine the generation route.
                 route = "parallel" if can_parallel else "sequential"
                 logger.info("[JOB %s] GENERATION START: route=%s, outputs=%d, steps=%d, offload=%s",
                             job_id, route, request.num_images, request.steps, self.settings.offload)

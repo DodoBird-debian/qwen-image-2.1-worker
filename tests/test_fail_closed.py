@@ -198,7 +198,7 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(calls[0]["generator"], [42, 43, 44, 45])
         self.assertEqual([image["seed"] for image in result["images"]], [42, 43, 44, 45])
 
-    def test_uncertain_compressible_batch_still_completes_with_seed_wrap(self):
+    def test_large_compressible_batch_runs_parallel_with_seed_wrap(self):
         entered, exited = Mock(), Mock()
         @contextmanager
         def context():
@@ -210,8 +210,9 @@ class OutputTests(unittest.TestCase):
         release = Mock()
         service, calls = self.service(release_memory=release, job_context=context)
         result = service.handle({"input": {"prompt": "test", "num_images": 4, "seed": MAX_SEED}})
-        self.assertEqual(len(calls), 4)
-        self.assertEqual([c["generator"] for c in calls], [MAX_SEED, 0, 1, 2])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["generator"], [MAX_SEED, 0, 1, 2])
+        self.assertEqual(calls[0]["num_images_per_prompt"], 4)
         self.assertEqual(len(result["images"]), 4)
         self.assertEqual(set(result), {"model", "revision", "parameters", "images", "inference_seconds"})
         for item in result["images"]:
@@ -244,12 +245,12 @@ class OutputTests(unittest.TestCase):
                 active.clear()
         service, calls = self.service(noise=True, settings=Settings(max_output_bytes=500_000), job_context=context)
         result = service.handle({"input": {"prompt": "test", "width": 256, "height": 256, "num_images": 4, "seed": 42}})
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 1)
         self.assertEqual([item["seed"] for item in result["images"]], [42, 43, 44, 45])
         self.assertLessEqual(len(json.dumps(result).encode()) + OUTPUT_ENVELOPE_HEADROOM, 500_000)
         self.assertTrue(all(item["width"] == 256 and item["mime_type"] == "image/jpeg" for item in result["images"]))
         self.assertFalse(result["delivery"]["partial"])
-        self.assertTrue(all(call.get("num_images_per_prompt", 1) == 1 for call in calls))
+        self.assertEqual(calls[0]["num_images_per_prompt"], 4)
         self.assertFalse(active)
 
     def test_requested_webp_and_jpeg_quality_and_count_are_preserved(self):
@@ -259,7 +260,8 @@ class OutputTests(unittest.TestCase):
                 with patch("qwen_worker.service.encode_image", wraps=encode_image) as encoder:
                     result = service.handle({"input": {"prompt": "test", "width": 256, "height": 256,
                                                       "num_images": 2, "output_format": fmt, "quality": 73}})
-                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0]["num_images_per_prompt"], 2)
                 self.assertEqual(len(result["images"]), 2)
                 self.assertTrue(all(call.args[1:3] == (fmt, 73) for call in encoder.call_args_list))
                 self.assertTrue(all(item["mime_type"] == f"image/{fmt}" for item in result["images"]))
