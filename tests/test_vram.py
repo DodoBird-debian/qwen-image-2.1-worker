@@ -79,7 +79,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(Counter(c["ideal_80gib_guard_route_for_four_outputs"] for c in unique_requests),
                          {"parallel": 13, "sequential": 6, "reject": 5})
         self.assertEqual(Counter(c["ideal_80gib_final_route_for_four_outputs"] for c in unique_requests),
-                         {"sequential": 19, "reject": 5})
+                         {"parallel": 13, "sequential": 6, "reject": 5})
 
     def test_cache_off_is_not_a_zero_vram_measurement(self):
         for c in self.cases:

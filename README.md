@@ -91,6 +91,12 @@ The aspect-ratio bound prevents upstream preprocessing from rounding a dimension
 
 ### Output
 
+Generation routing uses only the existing conditioning, denoising, and decoding
+VRAM budgets. A batch that fits all phases runs in parallel, regardless of output
+format or predicted encoded size. If only one image fits, outputs run sequentially;
+requests that cannot fit even one image are rejected before inference. Response
+compression and the final serialized-byte limit are applied after generation.
+
 Runpod wraps the worker result in its job `output` field:
 
 ```json

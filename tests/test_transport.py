@@ -13,7 +13,8 @@ from PIL import Image
 
 from qwen_worker.config import Settings
 from qwen_worker.images import encode_image
-from qwen_worker.requests import GenerationRequest
+from qwen_worker.memory import GIB
+from qwen_worker.requests import GenerationRequest, InputError
 from qwen_worker.service import ImageService, OUTPUT_ENVELOPE_HEADROOM
 from qwen_worker.transport import fit_output, json_bytes
 
@@ -153,7 +154,8 @@ class TransportTests(unittest.TestCase):
             return SimpleNamespace(images=[image])
         one = json_bytes(encode_image(image, "jpeg", 1, 42, optimize=True, lossy=True))
         service = ImageService(pipeline, lambda seed: seed,
-                               Settings(max_output_bytes=one + 1500 + OUTPUT_ENVELOPE_HEADROOM))
+                               Settings(max_output_bytes=one + 1500 + OUTPUT_ENVELOPE_HEADROOM),
+                               memory_budget=lambda: 4 * GIB)
         result = service.handle({"input": {"prompt": "test", "width": 256, "height": 256, "num_images": 4, "seed": 42}})
         self.assertEqual(len(calls), 2)
         self.assertEqual(len(result["images"]), 1)
@@ -161,9 +163,64 @@ class TransportTests(unittest.TestCase):
         self.assertLessEqual(json_bytes(result) + OUTPUT_ENVELOPE_HEADROOM, service.settings.max_output_bytes)
 
 
+class GenerationRoutingTests(unittest.TestCase):
+    def pipeline(self, calls):
+        def generate(**kwargs):
+            calls.append(kwargs)
+            image = Image.new("RGBA", (kwargs["width"], kwargs["height"]), (20, 40, 60, 128))
+            return SimpleNamespace(images=[image] * kwargs.get("num_images_per_prompt", 1))
+        return generate
+
+    def test_four_image_batch_uses_memory_admission_for_every_format_and_response_budget(self):
+        reference = encode_image(Image.new("RGB", (1024, 1024)), "png", 95, 0)["image_base64"]
+        for fmt in ("png", "jpeg", "webp"):
+            for limit in (8_000_000, 500_000):
+                with self.subTest(format=fmt, response_limit=limit):
+                    calls = []
+                    # Comparable to the model-offloaded A40 phase budgets in the job log.
+                    service = ImageService(self.pipeline(calls), lambda seed: seed,
+                                           Settings(offload="model", max_output_bytes=limit),
+                                           phase_budgets=lambda: {"conditioning": 27 * GIB,
+                                                                  "denoising": 30 * GIB, "decoding": 43 * GIB})
+                    result = service.handle({"input": {"prompt": "test", "width": 1024, "height": 1024,
+                        "images": [reference] * 3, "num_images": 4, "use_kv_cache": False,
+                        "output_format": fmt, "seed": 42}})
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(calls[0]["num_images_per_prompt"], 4)
+                    self.assertEqual(calls[0]["generator"], [42, 43, 44, 45])
+                    self.assertEqual([image["seed"] for image in result["images"]], [42, 43, 44, 45])
+                    self.assertLessEqual(json_bytes(result) + OUTPUT_ENVELOPE_HEADROOM, limit)
+
+    def test_each_phase_budget_retains_byte_exact_admission(self):
+        inputs = {"prompt": "test", "width": 1024, "height": 1024, "num_images": 4, "seed": 42}
+        request = GenerationRequest.parse(inputs)
+        probe = ImageService(None, None, Settings())
+        need, _ = probe.check_memory(request, [])
+        parallel = {"conditioning": need.conditioning_bytes, "denoising": need.parallel_total_bytes,
+                    "decoding": need.parallel_decoding_bytes}
+        sequential = {"conditioning": need.conditioning_bytes, "denoising": need.total_bytes,
+                      "decoding": need.decoding_bytes}
+        for phase in parallel:
+            for delta in (0, -1):
+                with self.subTest(phase=phase, delta_bytes=delta):
+                    budgets = {**parallel, phase: parallel[phase] + delta}
+                    calls = []
+                    service = ImageService(self.pipeline(calls), lambda seed: seed, Settings(),
+                                           phase_budgets=lambda: budgets)
+                    if budgets[phase] < sequential[phase]:
+                        with self.assertRaises(InputError):
+                            service.handle({"input": inputs})
+                        self.assertEqual(calls, [])
+                    else:
+                        result = service.handle({"input": inputs})
+                        self.assertEqual(len(calls), 1 if delta == 0 else 4)
+                        self.assertEqual(len(result["images"]), 4)
+
+
 class JobLogTests(unittest.TestCase):
     def test_final_summary_reports_actual_route_time_and_whole_job_peaks(self):
-        for width, expected in ((512, "parallel"), (1024, "sequential")):
+        width = 1024
+        for budget, expected in ((80 * GIB, "parallel"), (4 * GIB, "sequential")):
             @contextmanager
             def context():
                 stats = {}
@@ -174,7 +231,8 @@ class JobLogTests(unittest.TestCase):
             def pipeline(**kwargs):
                 return SimpleNamespace(images=[Image.new("RGBA", (width, width))
                                               for _ in range(kwargs.get("num_images_per_prompt", 1))])
-            service = ImageService(pipeline, lambda seed: seed, Settings(), job_context=context)
+            service = ImageService(pipeline, lambda seed: seed, Settings(), job_context=context,
+                                   memory_budget=lambda: budget)
             with self.subTest(route=expected), self.assertLogs("qwen_worker.service", level="INFO") as logs:
                 service.handle({"id": "summary", "input": {
                     "prompt": "test", "width": width, "height": width, "num_images": 4}})

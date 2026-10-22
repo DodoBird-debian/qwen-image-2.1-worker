@@ -16,8 +16,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from qwen_worker.memory import GIB, estimate, text_token_bound
-from qwen_worker.output_budget import parallel_output_fits
-from qwen_worker.requests import GenerationRequest
 
 
 def build_cases(fixture, spec):
@@ -117,22 +115,7 @@ def build_cases(fixture, spec):
         case["forced_route_lower_bound_exceeds_80gib"] = (
             case["identified_eager_tensors_peak_lower_bound_bytes"] > capacity
         )
-        request = GenerationRequest.parse({
-            "prompt": fixture["prompt"], "width": case["output_width"], "height": case["output_height"],
-            "num_images": fixture["num_outputs"], "seed": fixture["seed"],
-            "output_resolution": case["reference_processing_resolution"],
-            "true_cfg_scale": case["cfg_scale"], "use_kv_cache": case["kv_cache"],
-        })
-        metadata = {"model": "Qwen/Qwen-Image-2.1", "revision": spec["model_revision"], "images": [],
-                    "parameters": {"num_inference_steps": fixture["num_inference_steps"],
-                                   "true_cfg_scale": float(case["cfg_scale"]),
-                                   "output_resolution": case["reference_processing_resolution"],
-                                   "use_kv_cache": case["kv_cache"]}}
-        memory_route = case["ideal_80gib_guard_route_for_four_outputs"]
-        case["ideal_80gib_final_route_for_four_outputs"] = (
-            "sequential" if memory_route == "parallel" and not parallel_output_fits(request, metadata, 8_000_000, 4096)
-            else memory_route
-        )
+        case["ideal_80gib_final_route_for_four_outputs"] = case["ideal_80gib_guard_route_for_four_outputs"]
     return cases
 
 
@@ -242,8 +225,8 @@ def write_report(cases, fixture, destination):
         "- Rows with an identified-tensor lower bound exceeding a GPU's actual capacity cannot complete under this placement policy and eager implementation. A floor below capacity does not establish that they fit.",
         "- The worker's byte-based token bound is intentionally larger than this fixture's actual token counts. Both exact K/V and the current worker's bounded K/V are retained in CSV/JSON.", "",
         "- Eleven forced rows have lower bounds above 80 GiB. Under the idealized 80 GiB guard calculation, every one is rejected or routed to sequential execution before inference.",
-        "- Memory admission alone routes the 24 distinct requests as 13 parallel, six sequential, and five rejected. The output budget changes the 13 parallel candidates to sequential: final routing is 19 sequential and five rejected. Each appears twice in this matrix.",
-        "- Four PNGs at 1024/2048 square have no guaranteed inline fit. Sequential encoding stops remaining calls once actual output exceeds the cap; compressible batches remain accepted. A late failure is still possible.",
+        "- Phase memory admission routes the 24 distinct requests as 13 parallel, six sequential, and five rejected. Response size does not change generation routing. Each appears twice in this matrix.",
+        "- Actual encoded responses are compressed, resized, or partially delivered after generation to fit the inline cap. When VRAM requires sequential generation, a partial delivery can stop remaining passes to avoid wasting compute.",
         "- These checks cover VRAM admission for the fixed fixture. Long positional layouts, malformed inputs, oversized encoded outputs and deployment failures need separate checks.", "",
         "Sources: pinned [DiT implementation](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/models/transformers/transformer_qwenimage21.py),",
         "[pipeline](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py),",
