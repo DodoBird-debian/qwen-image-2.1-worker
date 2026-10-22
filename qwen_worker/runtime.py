@@ -9,6 +9,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -132,6 +133,36 @@ def _cached_snapshot(base: Path, settings: Settings) -> Path | None:
         if not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
             return None
     return model_cache / "snapshots" / revision
+
+
+def _log_model_cache(settings: Settings) -> None:
+    """List cache directories before validation, without reading weight contents."""
+    cache = configure_cache()
+    paths = [Path("/runpod-volume"), Path("/runpod-volume/huggingface-cache"),
+             Path("/runpod-volume/huggingface")]
+    for base in _cache_roots(cache):
+        model = base / f"models--{settings.model_id.replace('/', '--')}"
+        paths.extend((base, model, model / "snapshots"))
+        snapshot = _cached_snapshot(base, settings)
+        if snapshot is not None:
+            paths.append(snapshot)
+    if settings.model_path:
+        paths.append(Path(settings.model_path))
+    paths = list(dict.fromkeys(paths))
+    logger.info("[CACHE LS] Requested model=%s revision=%s HF_HOME=%s",
+                settings.model_id, settings.model_revision, cache)
+    logger.info("[CACHE LS] ls -la -- %s", " ".join(str(path) for path in paths))
+    try:
+        result = subprocess.run(
+            ["ls", "-la", "--", *(str(path) for path in paths)],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=3, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("[CACHE LS] Directory listing unavailable: %s", exc)
+        return
+    output = (result.stderr + result.stdout).strip()
+    logger.info("[CACHE LS] exit=%s:\n%s%s", result.returncode, output[:20000],
+                "\n[CACHE LS] Output truncated at 20000 characters" if len(output) > 20000 else "")
 
 
 class ModelCacheError(RuntimeError):
@@ -298,6 +329,7 @@ def _phase_tensor_budgets(pipe, torch, offload: str, component_bytes: dict[str, 
 
 
 def load_service(settings: Settings) -> ImageService:
+    _log_model_cache(settings)
     t_resolve = time.perf_counter()
     logger.info("[STARTUP] Checking required cached model; automatic downloads DISABLED")
     try:
