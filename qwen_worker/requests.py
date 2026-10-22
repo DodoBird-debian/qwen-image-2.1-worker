@@ -5,6 +5,8 @@ import secrets
 from dataclasses import dataclass
 from typing import Any
 
+from qwen_worker.config import DEFAULT_STEPS
+
 ASPECT_RATIOS = {
     "1:1": (2048, 2048),
     "4:3": (2400, 1792),
@@ -137,7 +139,7 @@ class GenerationRequest:
             prompt=prompt.strip(),
             width=width,
             height=height,
-            steps=integer(data, "num_inference_steps", 40, 1, 100),
+            steps=integer(data, "num_inference_steps", DEFAULT_STEPS, 1, 100),
             seed=seed,
             num_images=integer(data, "num_images", 1, 1, 4),
             images=tuple(images),

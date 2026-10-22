@@ -4,8 +4,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-MODEL_ID = "Qwen/Qwen-Image-2.1"
-MODEL_REVISION = "790c92633540aa0cb11d9abf19eb46d861714758"
+MODEL_ID = "Qwen/Qwen-Image-2.1-Turbo"
+MODEL_REVISION = "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+
+
+DEFAULT_STEPS = 8
 
 
 OFFLOAD_MODES = {"none", "text_encoder", "model", "sequential"}

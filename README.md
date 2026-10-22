@@ -1,7 +1,7 @@
-# Qwen-Image-2.1 Runpod Worker v0.0.1.2
+# Qwen-Image-2.1-Turbo Runpod Worker v0.0.1.2
 [![Runpod](https://api.runpod.io/badge/DodoBird-debian/qwen-image-2.1-worker)](https://console.runpod.io/hub/listing/DodoBird-debian/qwen-image-2.1-worker)
 
-A queue-based Runpod Serverless worker for **Qwen/Qwen-Image-2.1** (v0.0.1.2). It loads one BF16
+A queue-based Runpod Serverless worker for **Qwen/Qwen-Image-2.1-Turbo** (v0.0.1.2). It loads one BF16
 pipeline before accepting jobs and reuses it for text-to-image generation, image
 editing with up to ten references, and transparent image generation.
 
@@ -38,7 +38,7 @@ A minimal request:
     "prompt": "A ceramic fox on a blue table, soft window light",
     "width": 1024,
     "height": 1024,
-    "num_inference_steps": 40,
+    "num_inference_steps": 8,
     "seed": 42,
     "output_format": "png"
   }
@@ -68,7 +68,7 @@ model capability prompted through text; the worker does not synthesize an alpha 
 | `prompt` | Required non-empty string, at most 20,000 characters |
 | `width`, `height` | 1024 each; supply both; multiples of 32 from 256 to 4096; total ≤4,500,000 pixels |
 | `aspect_ratio` | Alternative to dimensions: 1:1, 4:3, 3:4, 3:2, 2:3, 16:9, 9:16; uses Qwen's native approximately 2K sizes |
-| `num_inference_steps` | 40; integer 1–100 |
+| `num_inference_steps` | 8; integers 1–100 accepted for compatibility, normalized to the checkpoint’s fixed 8-step schedule |
 | `seed` | Random if omitted or -1; otherwise integer 0 to 2^63−1 |
 | `num_images` | 1; integer 1–4; consecutive seeds, parallel only when phase estimates admit the batch |
 | `images` | Empty; at most 10 references, combined base64 ≤10,000,000 characters; the entire `/run` JSON must also fit 10,000,000 bytes |
@@ -95,8 +95,8 @@ Runpod wraps the worker result in its job `output` field:
 
 ```json
 {
-  "model": "Qwen/Qwen-Image-2.1",
-  "revision": "790c92633540aa0cb11d9abf19eb46d861714758",
+  "model": "Qwen/Qwen-Image-2.1-Turbo",
+  "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b",
   "images": [
     {
       "image_base64": "...",
@@ -132,12 +132,22 @@ map results onto an edit canvas must scale coordinates using the returned dimens
 `scripts/client.py --decode response.json`
 also decodes previously saved API results.
 
+## Turbo branch
+
+This branch uses the official fixed **8-step** Turbo sampling schedule. The UI,
+API defaults, response metadata, and progress logs use 8 steps. Older valid
+1–100 step inputs are accepted and normalized to the saved schedule; they do not
+create a custom sigma schedule. CFG remains 1 by default.
+
+See [Turbo deployment and compatibility](docs/turbo.md) before changing the
+endpoint: both its Model field and environment must reference the Turbo snapshot.
+
 ## Configuration
 
 | Environment variable | Default / effect |
 |---|---|
-| `MODEL_ID` | `Qwen/Qwen-Image-2.1`; alternate checkpoints must use the same pipeline |
-| `MODEL_REVISION` | `790c92633540aa0cb11d9abf19eb46d861714758`; change together with MODEL_ID |
+| `MODEL_ID` | `Qwen/Qwen-Image-2.1-Turbo`; alternate checkpoints must use the same pipeline |
+| `MODEL_REVISION` | `fc13ba1986fcb905854dc8de2f52eee395f49b5b`; change together with MODEL_ID |
 | `MODEL_PATH` | Optional complete local Diffusers snapshot; must already exist; bypasses Hub revision lookup |
 | `HF_HOME` | Automatic persistent-volume or container-cache path |
 | `HF_TOKEN` | Optional, handled by huggingface_hub |
@@ -197,7 +207,7 @@ Dockerfile. Leave it unset on production endpoints: a missing or incomplete
 cache must still fail immediately. Do not use the Hub-test exception as a
 production download fallback. Tests may spend GPU time downloading if their Pod
 has no cache; a separately provisioned cache avoids that cost. The test revision
-is `790c92633540aa0cb11d9abf19eb46d861714758`; an endpoint using another cached
+is `fc13ba1986fcb905854dc8de2f52eee395f49b5b`; an endpoint using another cached
 revision must keep its own `MODEL_REVISION` override aligned with that cache.
 
 ### Generation logs
@@ -253,11 +263,11 @@ request and representative editing/2K jobs on the chosen Runpod GPU.
 
 ## Source pins and model license
 
-- [Qwen-Image-2.1 model and usage](https://huggingface.co/Qwen/Qwen-Image-2.1)
-- [Pinned model snapshot](https://huggingface.co/Qwen/Qwen-Image-2.1/tree/790c92633540aa0cb11d9abf19eb46d861714758)
-- [Pinned Diffusers pipeline](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py)
+- [Qwen-Image-2.1-Turbo model and usage](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo)
+- [Pinned model snapshot](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/tree/fc13ba1986fcb905854dc8de2f52eee395f49b5b)
+- [Pinned Diffusers pipeline](https://github.com/huggingface/diffusers/blob/da1d3829cf08d4f329b526d89e17cc035c049d8d/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py)
 - [Transformers 5.17.0](https://github.com/huggingface/transformers/releases/tag/v5.17.0)
-- [Qwen Research License for model weights](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE)
+- [Qwen Research License for model weights](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/blob/main/LICENSE)
 
 The container pins its direct dependencies and the Diffusers source commit.
 The build resolves transitive dependencies; record `pip freeze` and deploy an image

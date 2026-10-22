@@ -3,7 +3,7 @@
     "prompt": "A studio photograph of a ceramic fox on a blue table, soft window light, a small sign reading QWEN 2.1",
     "width": 1024,
     "height": 1024,
-    "num_inference_steps": 40,
+    "num_inference_steps": 8,
     "seed": 42,
     "output_format": "png"
   }

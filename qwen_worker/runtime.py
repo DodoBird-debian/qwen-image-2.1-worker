@@ -1,6 +1,7 @@
 """GPU initialization performed once, before the Runpod worker starts accepting jobs."""
 
 import logging
+import math
 import hashlib
 import errno
 import inspect
@@ -16,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
-from qwen_worker.config import Settings, configure_cache
+from qwen_worker.config import DEFAULT_STEPS, MODEL_ID, Settings, configure_cache
 from qwen_worker.service import ImageService
 from qwen_worker.preflight import RequestPreflight
 
@@ -274,6 +275,23 @@ def _validate_architecture(pipe) -> None:
         raise ValueError("Unsupported VAE architecture; expected 64 latent channels and 16x spatial compression")
 
 
+def _configured_sampling_steps(pipe, settings: Settings) -> int | None:
+    sigmas = getattr(pipe.config, "sample_sigmas", None)
+    if sigmas is None:
+        if settings.model_id == MODEL_ID:
+            raise ValueError("Turbo requires its saved 8-step sample_sigmas; check the checkpoint and Diffusers pin")
+        return None
+    if (not isinstance(sigmas, (list, tuple)) or not sigmas
+            or any(type(sigma) not in {int, float} or not math.isfinite(sigma)
+                   or not 0 < sigma <= 1 for sigma in sigmas)
+            or any(a <= b for a, b in zip(sigmas, sigmas[1:]))):
+        raise ValueError("Invalid checkpoint sample_sigmas")
+    if settings.model_id == MODEL_ID and len(sigmas) != DEFAULT_STEPS:
+        raise ValueError("Turbo requires the official 8-step checkpoint sampling schedule")
+    logger.info("[SAMPLING] Using checkpoint's fixed %d-step sigma schedule", len(sigmas))
+    return len(sigmas)
+
+
 def _install_conditioning_encoder_hook(encoder):
     """Limit unused LM outputs while retaining upstream hidden-state semantics.
 
@@ -435,6 +453,7 @@ def load_service(settings: Settings) -> ImageService:
         local_files_only=True,
     )
     _validate_architecture(pipe)
+    sampling_steps = _configured_sampling_steps(pipe, settings)
     preflight = RequestPreflight(pipe)
     _install_conditioning_encoder_hook(pipe.text_encoder)
     component_bytes = {name: _module_bytes(getattr(pipe, name)) for name in ("text_encoder", "transformer", "vae")}
@@ -501,7 +520,7 @@ def load_service(settings: Settings) -> ImageService:
     def infer(**kwargs):
         started = time.perf_counter()
         last_logged = started
-        total_steps = kwargs.get("num_inference_steps", 40)
+        total_steps = sampling_steps or kwargs.get("num_inference_steps", DEFAULT_STEPS)
 
         def log_step(_pipe, step, _timestep, callback_kwargs):
             nonlocal last_logged
@@ -593,6 +612,7 @@ def load_service(settings: Settings) -> ImageService:
         release_memory=release_memory,
         job_context=job_context,
         preflight=preflight,
+        sampling_steps=sampling_steps,
     )
 
 

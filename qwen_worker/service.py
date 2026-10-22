@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
+from dataclasses import replace
 
 from qwen_worker.config import Settings
 from qwen_worker.images import decode_images, encode_image
@@ -25,6 +26,7 @@ class ImageService:
         phase_budgets: Callable[[], dict[str, int]] | None = None,
         job_context: Callable | None = None,
         preflight: Callable | None = None,
+        sampling_steps: int | None = None,
     ):
         self.pipeline = pipeline
         self.generator_factory = generator_factory
@@ -34,6 +36,7 @@ class ImageService:
         self.phase_budgets = phase_budgets
         self.job_context = job_context
         self.preflight = preflight
+        self.sampling_steps = sampling_steps
         self._lock = threading.Lock()
 
     def check_memory(self, request: GenerationRequest, references: list) -> tuple[MemoryEstimate, bool]:
@@ -109,6 +112,10 @@ class ImageService:
         if not isinstance(job, dict):
             raise InputError("job must contain an input object")
         request = GenerationRequest.parse(job.get("input", {}))
+        if self.sampling_steps is not None and request.steps != self.sampling_steps:
+            logger.info("Using checkpoint sampling schedule: requested %d steps, actual %d",
+                        request.steps, self.sampling_steps)
+            request = replace(request, steps=self.sampling_steps)
         decoded_at = time.perf_counter()
         references = decode_images(request.images)
         logger.info("Job %s: %dx%d, outputs=%d, steps=%d, CFG=%s, refs=%d, decode=%.3fs",

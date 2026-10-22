@@ -19,6 +19,9 @@ for method in ("_get_num_multimodal_tokens", "get_text_with_replacements"):
     if not callable(getattr(Qwen3VLProcessor, method, None)):
         raise RuntimeError(f"Unsupported CPU positional preflight API: {method}")
 
+if "sample_sigmas" not in inspect.signature(QwenImage21Pipeline.__init__).parameters:
+    raise RuntimeError("Turbo requires Diffusers support for checkpoint sample_sigmas")
+
 worker_pipeline = make_pipeline_class(QwenImage21Pipeline)
 if inspect.signature(worker_pipeline.__init__) != inspect.signature(QwenImage21Pipeline.__init__):
     raise RuntimeError("Worker adapter changed the Diffusers component constructor")
