@@ -1,7 +1,8 @@
 # Qwen-Image-2.1-Turbo migration
 
-The `trubo` branches in the worker and WebUI use Qwen's official fixed eight-step
-schedule, rather than creating an experimental seven-step schedule.
+The worker's `trubo` branch uses Qwen's official fixed eight-step schedule.
+The WebUI keeps its existing behavior, with only its default step count changed
+from 40 to 8.
 
 ## Runpod configuration
 
@@ -25,10 +26,10 @@ disabled; `QWEN_HUB_TEST_PROVISION` remains a test-only exception. A working cac
 of the base model does not satisfy the Turbo model ID/revision. Switching models
 does not itself repair a missing Runpod cache mount.
 
-Deploy the WebUI's `trubo` branch against that endpoint after its cached-model
-startup succeeds. Existing browser history remains available. Imported base-model
-step settings normalize to eight; comparison grids offer seed and CFG axes because
-changing only the requested step count does not change Turbo's saved schedule.
+Use the existing WebUI against that endpoint after its cached-model startup
+succeeds. Its step field remains editable, imported settings are preserved, and
+comparison grids are unchanged. The Turbo worker reports the checkpoint's actual
+eight-step schedule in its logs and response metadata.
 
 ## Runtime compatibility
 
@@ -55,9 +56,8 @@ request batching, transport fitting, and cache-only startup remain in place.
 ## Validation
 
 CPU tests cover saved-schedule validation, normalization of legacy requests, actual
-step metadata, and eight-step progress. WebUI unit/browser checks cover the eight-
-step default, imported settings, and seed/CFG comparisons. Hub smoke inputs use
-Turbo at eight steps for text generation, transparency, and reference editing.
+step metadata, and eight-step progress. Hub smoke inputs use Turbo at eight steps
+for text generation, transparency, and reference editing.
 No local GPU quality or latency benchmark is implied by those CPU checks.
 
 Sources: [model card](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo),
