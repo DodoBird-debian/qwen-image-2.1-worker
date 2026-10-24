@@ -14,14 +14,16 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from qwen_worker.config import MODEL_REVISION, Settings, configure_cache
+from qwen_worker.config import BASE_MODEL_ID, BASE_MODEL_REVISION, DEFAULT_STEPS, MODEL_ID, MODEL_REVISION, SUPPORTED_MODELS, Settings, configure_cache
 from qwen_worker import runtime
 
 
-def make_snapshot(path):
+def make_snapshot(path, *, turbo=True):
     path.mkdir(parents=True, exist_ok=True)
     components = ("processor", "scheduler", "text_encoder", "transformer", "vae")
     index = {"_class_name": "QwenImage21Pipeline"}
+    if turbo:
+        index["sample_sigmas"] = [1 - i / 10 for i in range(8)]
     for component in components:
         index[component] = ["diffusers", component]
         directory = path / component
@@ -40,7 +42,7 @@ class SnapshotTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.cache = self.root / "hub"
-        self.model_cache = self.cache / "models--Qwen--Qwen-Image-2.1"
+        self.model_cache = self.cache / f"models--{MODEL_ID.replace('/', '--')}"
 
     def test_explicit_complete_snapshot(self):
         path = make_snapshot(self.root / "explicit")
@@ -268,7 +270,7 @@ class SnapshotTests(unittest.TestCase):
         exact = self.model_cache / "snapshots" / MODEL_REVISION
         def snapshot_download(**kwargs):
             self.assertEqual(kwargs["revision"], MODEL_REVISION)
-            self.assertEqual(kwargs["repo_id"], "Qwen/Qwen-Image-2.1")
+            self.assertEqual(kwargs["repo_id"], MODEL_ID)
             events.append("download")
             return str(make_snapshot(exact))
         download = Mock(side_effect=snapshot_download)
@@ -327,7 +329,11 @@ class SnapshotTests(unittest.TestCase):
         hub = json.loads((root / ".runpod" / "hub.json").read_text())
         test_env = {entry["key"]: entry.get("value") for entry in tests["config"]["env"]}
         self.assertEqual(test_env["QWEN_HUB_TEST_PROVISION"], "true")
-        self.assertEqual(test_env["MODEL_REVISION"], MODEL_REVISION)
+        self.assertNotIn("MODEL_ID", test_env)
+        self.assertNotIn("MODEL_REVISION", test_env)
+        self.assertNotIn("MODEL_ID", {entry["key"] for entry in hub["config"]["env"]})
+        self.assertNotIn("MODEL_REVISION", {entry["key"] for entry in hub["config"]["env"]})
+        self.assertTrue(all(test["input"]["num_inference_steps"] == 8 for test in tests["tests"]))
         self.assertNotIn("QWEN_HUB_TEST_PROVISION", {entry["key"] for entry in hub["config"]["env"]})
         self.assertNotIn("QWEN_HUB_TEST_PROVISION", (root / "Dockerfile").read_text())
 
@@ -338,7 +344,7 @@ class SnapshotTests(unittest.TestCase):
         with patch.object(runtime, "configure_cache", return_value=self.root), patch.object(runtime, "_cache_roots", return_value=[self.cache]), patch.dict(sys.modules, {"huggingface_hub": SimpleNamespace(snapshot_download=download)}):
             self.assertEqual(runtime.download_model(Settings()), str(downloaded))
         self.assertEqual(download.call_args.kwargs["revision"], MODEL_REVISION)
-        self.assertEqual(download.call_args.kwargs["repo_id"], "Qwen/Qwen-Image-2.1")
+        self.assertEqual(download.call_args.kwargs["repo_id"], MODEL_ID)
 
     def test_incomplete_cache_is_repaired_through_hub(self):
         partial = make_snapshot(self.model_cache / "snapshots" / MODEL_REVISION)
@@ -366,6 +372,36 @@ class SnapshotTests(unittest.TestCase):
     def test_explicit_hub_cache_takes_precedence(self):
         with patch.dict(os.environ, {"HF_HUB_CACHE": str(self.root / "custom")}, clear=True), patch.object(Path, "home", return_value=self.root):
             self.assertEqual(runtime._cache_roots(self.root)[0], self.root / "custom")
+
+
+class TurboSamplingTests(unittest.TestCase):
+    def test_turbo_requires_complete_saved_schedule(self):
+        for sigmas in (None, [], [1.0] * 8, [0.5, 1.0], [float("nan")] * 8):
+            with self.subTest(sigmas=sigmas), self.assertRaises(ValueError):
+                runtime._configured_sampling_steps(SimpleNamespace(config=SimpleNamespace(sample_sigmas=sigmas)), Settings())
+        pipe = SimpleNamespace(config=SimpleNamespace(sample_sigmas=[1 - i / 10 for i in range(8)]))
+        self.assertEqual(runtime._configured_sampling_steps(pipe, Settings()), 8)
+        self.assertIsNone(runtime._configured_sampling_steps(SimpleNamespace(config=SimpleNamespace()), Settings(model_id=BASE_MODEL_ID)))
+        # Schedule length comes from checkpoint metadata, not a hardcoded eight-step cap.
+        self.assertEqual(runtime._configured_sampling_steps(SimpleNamespace(config=SimpleNamespace(sample_sigmas=[1.0, 0.5])), Settings()), 2)
+
+    def test_requests_pass_unchanged_and_metadata_reports_native_steps(self):
+        from PIL import Image
+        from qwen_worker.service import ImageService
+        calls = []
+        def pipeline(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(images=[Image.new("RGB", (512, 512))])
+        for model_id, saved_steps in ((BASE_MODEL_ID, None), (MODEL_ID, 8)):
+            service = ImageService(pipeline, lambda seed: seed, Settings(model_id=model_id), sampling_steps=saved_steps)
+            for requested in (1, 4, 7, 8, 40, 100):
+                with self.subTest(model=model_id, requested=requested):
+                    result = service.handle({"input": {"prompt": "cube", "num_inference_steps": requested,
+                                                       "width": 512, "height": 512, "seed": 42}})
+                    self.assertEqual(calls[-1]["num_inference_steps"], requested)
+                    self.assertEqual(result["parameters"]["num_inference_steps"], saved_steps or requested)
+                    self.assertEqual(result["model"], model_id)
+
 
 
 class FakeTensor:
@@ -457,6 +493,7 @@ class EncoderHookTests(unittest.TestCase):
 class RuntimeIntegrationTests(unittest.TestCase):
     def load_fake_service(self, settings=None):
         events = []
+        selected = settings or Settings()
 
         class FakeModule:
             def __init__(self, name, size):
@@ -498,6 +535,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.transformer = FakeModule("transformer", 20)
                 self.vae = FakeModule("vae", 5)
                 self.fail = False
+                self.config = SimpleNamespace(sample_sigmas=[1 - i / 10 for i in range(8)] if selected.model_id == MODEL_ID else None)
 
             @classmethod
             def from_pretrained(cls, source, **kwargs):
@@ -517,11 +555,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 events.append("reference_vae")
                 return None
 
-            def __call__(self, prompt, callback_on_step_end, callback_on_step_end_tensor_inputs):
+            def __call__(self, prompt, callback_on_step_end, callback_on_step_end_tensor_inputs, num_inference_steps=DEFAULT_STEPS):
                 self._get_qwen_prompt_embeds(prompt, None, "cuda")
                 self.prepare_latents(None, 1, 64, 32, 32, "bf16", "cuda", None)
                 self.callback_inputs = callback_on_step_end_tensor_inputs
-                for step in range(40):
+                for step in range(len(self.config.sample_sigmas) if self.config.sample_sigmas else num_inference_steps):
                     self.callback_result = callback_on_step_end(self, step, None, {})
                 return SimpleNamespace(images=[])
 
@@ -591,8 +629,16 @@ class RuntimeIntegrationTests(unittest.TestCase):
         pipeline = next(cell.cell_contents for cell in service.pipeline.__closure__ if hasattr(cell.cell_contents, "conditioning_context"))
         self.assertEqual(pipeline.callback_inputs, [])
         self.assertEqual(pipeline.callback_result, {})
-        self.assertTrue(any("step 1/40" in line for line in logs.output))
-        self.assertTrue(any("step 40/40" in line for line in logs.output))
+        self.assertTrue(any("step 1/8" in line for line in logs.output))
+        self.assertTrue(any("step 8/8" in line for line in logs.output))
+
+    def test_base_pipeline_uses_requested_steps_with_shared_dependency(self):
+        service, events = self.load_fake_service(Settings(model_id=BASE_MODEL_ID, model_revision=BASE_MODEL_REVISION))
+        self.assertIsNone(service.sampling_steps)
+        with self.assertLogs(runtime.logger, level="INFO") as logs, service.job_context():
+            service.pipeline(prompt="cube", num_inference_steps=4)
+        self.assertTrue(any("step 4/4" in line for line in logs.output))
+        self.assertFalse(any("/8" in line for line in logs.output))
 
     def test_positional_preflight_still_runs_when_memory_guard_is_disabled(self):
         from qwen_worker.requests import InputError

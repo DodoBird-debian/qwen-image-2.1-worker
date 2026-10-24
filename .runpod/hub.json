@@ -1,6 +1,6 @@
 {
-  "title": "Qwen-Image-2.1 Worker v0.0.1.2",
-  "description": "Generate, edit, and create transparent images with Qwen-Image-2.1 using a native Diffusers queue worker (v0.0.1.2).",
+  "title": "Qwen-Image-2.1 / Turbo Worker v0.0.1.2",
+  "description": "Generate, edit, and create transparent images with the cached Qwen-Image-2.1 or Turbo checkpoint using one native Diffusers queue worker.",
   "type": "serverless",
   "category": "image",
   "config": {
@@ -16,14 +16,6 @@
       "13.2"
     ],
     "env": [
-      {
-        "key": "MODEL_ID",
-        "value": "Qwen/Qwen-Image-2.1"
-      },
-      {
-        "key": "MODEL_REVISION",
-        "value": "790c92633540aa0cb11d9abf19eb46d861714758"
-      },
       {
         "key": "CPU_OFFLOAD",
         "input": {

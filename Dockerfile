@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Rebuild requested on 2026-10-22 to inspect Runpod build logs.
+# One image serves Base or Turbo from the complete model cache detected at startup.
 ARG BASE_IMAGE=pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 FROM ${BASE_IMAGE}
 

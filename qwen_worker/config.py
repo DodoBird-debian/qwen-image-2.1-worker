@@ -4,8 +4,16 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-MODEL_ID = "Qwen/Qwen-Image-2.1"
-MODEL_REVISION = "790c92633540aa0cb11d9abf19eb46d861714758"
+# Provisioning/test defaults only; production identifies its mounted snapshot.
+MODEL_ID = "Qwen/Qwen-Image-2.1-Turbo"
+MODEL_REVISION = "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+
+
+BASE_MODEL_ID = "Qwen/Qwen-Image-2.1"
+BASE_MODEL_REVISION = "790c92633540aa0cb11d9abf19eb46d861714758"
+SUPPORTED_MODELS = {BASE_MODEL_ID: BASE_MODEL_REVISION, MODEL_ID: MODEL_REVISION}
+# The generic API keeps its existing range/default; Turbo's UI selects eight.
+DEFAULT_STEPS = 40
 
 
 OFFLOAD_MODES = {"none", "text_encoder", "model", "sequential"}
@@ -21,7 +29,7 @@ def _env_bool(name: str, default: str) -> bool:
 @dataclass(frozen=True)
 class Settings:
     model_id: str = MODEL_ID
-    model_revision: str = MODEL_REVISION
+    model_revision: str | None = MODEL_REVISION
     model_path: str | None = None
     # The encoder lives in ordinary CPU memory between conditioning passes and
     # is staged to GPU on a job's conditioning cache miss. Transformer and VAE
@@ -35,12 +43,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        # Model selectors are read only by explicit provisioning, not serving.
         offload = os.environ.get("CPU_OFFLOAD", "text_encoder").lower()
         if offload not in OFFLOAD_MODES:
             raise ValueError("CPU_OFFLOAD must be none, text_encoder, model, or sequential")
         return cls(
-            model_id=os.environ.get("MODEL_ID", MODEL_ID),
-            model_revision=os.environ.get("MODEL_REVISION", MODEL_REVISION),
             model_path=os.environ.get("MODEL_PATH") or None,
             offload=offload,
             vae_tiling=_env_bool("VAE_TILING", "true"),

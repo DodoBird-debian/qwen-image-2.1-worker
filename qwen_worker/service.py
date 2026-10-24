@@ -24,6 +24,7 @@ class ImageService:
         phase_budgets: Callable[[], dict[str, int]] | None = None,
         job_context: Callable | None = None,
         preflight: Callable | None = None,
+        sampling_steps: int | None = None,
     ):
         self.pipeline = pipeline
         self.generator_factory = generator_factory
@@ -33,6 +34,7 @@ class ImageService:
         self.phase_budgets = phase_budgets
         self.job_context = job_context
         self.preflight = preflight
+        self.sampling_steps = sampling_steps
         self._lock = threading.Lock()
 
     def check_memory(self, request: GenerationRequest, references: list) -> tuple[MemoryEstimate, bool]:
@@ -108,11 +110,15 @@ class ImageService:
         if not isinstance(job, dict):
             raise InputError("job must contain an input object")
         request = GenerationRequest.parse(job.get("input", {}))
+        actual_steps = self.sampling_steps or request.steps
+        if actual_steps != request.steps:
+            logger.info("Native checkpoint schedule: requested %d steps, actual %d; request passed unchanged",
+                        request.steps, actual_steps)
         decoded_at = time.perf_counter()
         references = decode_images(request.images)
         logger.info("Job %s: %dx%d, outputs=%d, steps=%d, CFG=%s, refs=%d, decode=%.3fs",
                     job.get("id", "unspecified_job"), request.width, request.height,
-                    request.num_images, request.steps, request.true_cfg_scale,
+                    request.num_images, actual_steps, request.true_cfg_scale,
                     len(references), time.perf_counter() - decoded_at)
         kwargs = {
             "prompt": request.effective_prompt, "width": request.width, "height": request.height,
@@ -125,8 +131,8 @@ class ImageService:
             kwargs["negative_prompt"] = request.negative_prompt
         result = {
             "model": self.settings.model_id,
-            "revision": None if self.settings.model_path else self.settings.model_revision,
-            "parameters": {"num_inference_steps": request.steps, "true_cfg_scale": request.true_cfg_scale,
+            "revision": self.settings.model_revision,
+            "parameters": {"num_inference_steps": actual_steps, "true_cfg_scale": request.true_cfg_scale,
                            "output_resolution": request.output_resolution, "use_kv_cache": request.use_kv_cache},
             "images": [],
         }
@@ -153,7 +159,7 @@ class ImageService:
                 # only the phase memory budgets determine the generation route.
                 route = "parallel" if can_parallel else "sequential"
                 logger.info("[JOB %s] GENERATION START: route=%s, outputs=%d, steps=%d, offload=%s",
-                            job_id, route, request.num_images, request.steps, self.settings.offload)
+                            job_id, route, request.num_images, actual_steps, self.settings.offload)
                 context = self.job_context() if self.job_context is not None else nullcontext()
                 with context as stats:
                     seeds = [(request.seed + index) % (MAX_SEED + 1) for index in range(request.num_images)]

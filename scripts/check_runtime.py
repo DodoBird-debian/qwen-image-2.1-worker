@@ -6,18 +6,27 @@ import sys
 from pathlib import Path
 from importlib.metadata import version
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from qwen_worker.config import MODEL_ID, MODEL_REVISION, SUPPORTED_MODELS
+from qwen_worker.conditioning import make_pipeline_class
+
+print("[BUILD CHECK] Supported cached models: " + ", ".join(SUPPORTED_MODELS), flush=True)
+print(f"[BUILD CHECK] Test default: {MODEL_ID}@{MODEL_REVISION}; test MODEL_ID/MODEL_REVISION may override it", flush=True)
+print("[BUILD CHECK] Model weights are absent during image build; cache validation runs at container startup, before accepting jobs", flush=True)
+
 import torch
 import torchvision
 from diffusers import QwenImage21Pipeline
 from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 from diffusers import AutoencoderKLQwenImage21
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from qwen_worker.conditioning import make_pipeline_class
 
 for method in ("_get_num_multimodal_tokens", "get_text_with_replacements"):
     if not callable(getattr(Qwen3VLProcessor, method, None)):
         raise RuntimeError(f"Unsupported CPU positional preflight API: {method}")
+
+if "sample_sigmas" not in inspect.signature(QwenImage21Pipeline.__init__).parameters:
+    raise RuntimeError("Turbo requires Diffusers support for checkpoint sample_sigmas")
 
 worker_pipeline = make_pipeline_class(QwenImage21Pipeline)
 if inspect.signature(worker_pipeline.__init__) != inspect.signature(QwenImage21Pipeline.__init__):
@@ -61,6 +70,7 @@ if "with_kwargs" not in inspect.signature(torch.nn.Module.register_forward_pre_h
 for method in ("enable_slicing", "enable_tiling", "clear_cache"):
     if not callable(getattr(AutoencoderKLQwenImage21, method, None)):
         raise RuntimeError(f"Unsupported VAE API: {method}")
+print("[BUILD CHECK] Shared Base/Turbo pipeline API checks passed", flush=True)
 print(
     json.dumps(
         {

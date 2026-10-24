@@ -1,6 +1,7 @@
 """GPU initialization performed once, before the Runpod worker starts accepting jobs."""
 
 import logging
+import math
 import hashlib
 import errno
 import inspect
@@ -16,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
-from qwen_worker.config import Settings, configure_cache
+from qwen_worker.config import BASE_MODEL_ID, DEFAULT_STEPS, MODEL_ID, SUPPORTED_MODELS, Settings, configure_cache
 from qwen_worker.service import ImageService
 from qwen_worker.preflight import RequestPreflight
 
@@ -121,6 +122,8 @@ def _cache_roots(cache: Path) -> list[Path]:
 def _cached_snapshot(base: Path, settings: Settings) -> Path | None:
     model_cache = base / f"models--{settings.model_id.replace('/', '--')}"
     revision = settings.model_revision
+    if revision is None:
+        return None
     if not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
         # Named revisions must resolve through the Hub's corresponding ref,
         # never through the first directory that happens to contain weights.
@@ -141,16 +144,14 @@ def _log_model_cache(settings: Settings) -> None:
     paths = [Path("/runpod-volume"), Path("/runpod-volume/huggingface-cache"),
              Path("/runpod-volume/huggingface")]
     for base in _cache_roots(cache):
-        model = base / f"models--{settings.model_id.replace('/', '--')}"
-        paths.extend((base, model, model / "snapshots"))
-        snapshot = _cached_snapshot(base, settings)
-        if snapshot is not None:
-            paths.append(snapshot)
+        paths.append(base)
+        for model_id in SUPPORTED_MODELS:
+            model = base / f"models--{model_id.replace('/', '--')}"
+            paths.extend((model, model / "snapshots"))
     if settings.model_path:
         paths.append(Path(settings.model_path))
     paths = list(dict.fromkeys(paths))
-    logger.info("[CACHE LS] Requested model=%s revision=%s HF_HOME=%s",
-                settings.model_id, settings.model_revision, cache)
+    logger.info("[CACHE LS] Supported models=%s HF_HOME=%s", ", ".join(SUPPORTED_MODELS), cache)
     logger.info("[CACHE LS] ls -la -- %s", " ".join(str(path) for path in paths))
     try:
         result = subprocess.run(
@@ -199,6 +200,92 @@ def resolve_cached_model(settings: Settings) -> str:
         f"Searched: {searched}. Downloads are disabled at worker startup. "
         "Check the model/volume mount and exact revision, or provision it beforehand with scripts/download_model.py."
     )
+
+
+def provisioning_settings(settings: Settings) -> Settings:
+    """Only explicit provisioning may select a model using environment variables."""
+    model_id = os.environ.get("MODEL_ID", "").strip() or MODEL_ID
+    if model_id not in SUPPORTED_MODELS:
+        raise ValueError(f"Unsupported test/provisioning MODEL_ID {model_id!r}; expected one of {', '.join(SUPPORTED_MODELS)}")
+    revision = os.environ.get("MODEL_REVISION", "").strip() or SUPPORTED_MODELS[model_id]
+    return replace(settings, model_id=model_id, model_revision=revision)
+
+
+def _snapshot_identity(path: Path) -> tuple[str, str | None]:
+    """Identify an explicit local snapshot without reading weight contents."""
+    index = _read_json(path / "model_index.json")
+    model_id = next((name for name in SUPPORTED_MODELS
+                     if f"models--{name.replace('/', '--')}" in path.parts), None)
+    if model_id is None:
+        model_id = MODEL_ID if index.get("sample_sigmas") is not None else BASE_MODEL_ID
+    _validate_sampling_sigmas(index.get("sample_sigmas"), model_id)
+    revision = path.name if re.fullmatch(r"[0-9a-fA-F]{40}", path.name) else None
+    return model_id, revision
+
+
+def detect_cached_model(settings: Settings) -> Settings:
+    """Production discovery is read-only and independent of model-selector env."""
+    logger.info("[MODEL DETECT] Production: selecting the complete cached model; MODEL_ID/MODEL_REVISION environment overrides are ignored; downloads DISABLED")
+    if settings.model_path:
+        path = Path(settings.model_path)
+        try:
+            _validate_snapshot(path)
+            model_id, revision = _snapshot_identity(path)
+        except (ValueError, OSError) as exc:
+            raise ModelCacheError(f"Invalid cached MODEL_PATH {path}: {exc}. Downloads are disabled at worker startup.") from exc
+        selected = replace(settings, model_id=model_id, model_revision=revision)
+    else:
+        roots = _cache_roots(configure_cache())
+        candidates = {}
+        problems = []
+        for base in roots:
+            for model_id in SUPPORTED_MODELS:
+                directory = base / f"models--{model_id.replace('/', '--')}" / "snapshots"
+                try:
+                    snapshots = sorted(directory.iterdir())
+                except FileNotFoundError:
+                    continue
+                except OSError as exc:
+                    problems.append(f"{directory}: {exc}")
+                    continue
+                for snapshot in snapshots:
+                    if not re.fullmatch(r"[0-9a-fA-F]{40}", snapshot.name):
+                        continue
+                    try:
+                        _validate_snapshot(snapshot)
+                        _validate_sampling_sigmas(_read_json(snapshot / "model_index.json").get("sample_sigmas"), model_id)
+                    except (ValueError, OSError) as exc:
+                        logger.warning("[MODEL DETECT] Incomplete/invalid cached snapshot %s: %s", snapshot, exc)
+                        problems.append(f"{snapshot}: {exc}")
+                        continue
+                    candidates.setdefault((model_id, snapshot.name), snapshot)
+        if len(candidates) > 1:
+            found = "; ".join(f"{model}@{revision}: {path}" for (model, revision), path in candidates.items())
+            raise ModelCacheError(f"Ambiguous model cache: {found}. Mount only the intended model/revision or set MODEL_PATH to its complete snapshot. Downloads are disabled at worker startup.")
+        if not candidates:
+            details = "; ".join(problems[:10]) or "no supported complete snapshots found"
+            raise ModelCacheError(
+                f"No complete supported cached model found ({', '.join(SUPPORTED_MODELS)}). "
+                f"Searched: {', '.join(map(str, roots))}. Details: {details}. "
+                "Downloads are disabled at worker startup. Check Runpod's cached Model setting and cache mount."
+            )
+        (model_id, revision), path = next(iter(candidates.items()))
+        selected = replace(settings, model_id=model_id, model_revision=revision, model_path=str(path))
+    logger.info("[MODEL DETECT] Selected model=%s revision=%s snapshot=%s", selected.model_id,
+                selected.model_revision or "unversioned local snapshot", selected.model_path)
+    return selected
+
+
+def prepare_startup_model(settings: Settings) -> Settings:
+    """Select before GPU imports or queue registration, with a clear fatal log."""
+    mode = "Hub test provisioning" if os.environ.get("QWEN_HUB_TEST_PROVISION", "false").lower() == "true" else "production cache detection"
+    try:
+        _log_model_cache(settings)
+        prepared = prepare_hub_test_model(settings)
+        return prepared if mode == "Hub test provisioning" else detect_cached_model(prepared)
+    except Exception:
+        logger.critical("[STARTUP FATAL] %s failed; refusing to accept jobs", mode, exc_info=True)
+        raise
 
 
 def download_model(settings: Settings) -> str:
@@ -250,6 +337,9 @@ def prepare_hub_test_model(settings: Settings) -> Settings:
         raise ValueError("QWEN_HUB_TEST_PROVISION must be true or false")
     if enabled == "false":
         return settings
+    settings = provisioning_settings(settings)
+    source = "MODEL_ID environment" if os.environ.get("MODEL_ID", "").strip() else "Turbo default (MODEL_ID unset)"
+    logger.info("[HUB TEST MODEL] selection=%s model=%s revision=%s", source, settings.model_id, settings.model_revision)
     logger.warning(
         "[HUB TEST PROVISION] Explicit test-only downloads ENABLED for %s@%s. "
         "Do not enable QWEN_HUB_TEST_PROVISION on production endpoints. "
@@ -258,6 +348,7 @@ def prepare_hub_test_model(settings: Settings) -> Settings:
     )
     started = time.perf_counter()
     source = download_model(settings)
+    _validate_sampling_sigmas(_read_json(Path(source) / "model_index.json").get("sample_sigmas"), settings.model_id)
     logger.info("[HUB TEST PROVISION] Complete in %.2fs; entering cache-only model loading", time.perf_counter() - started)
     return replace(settings, model_path=source)
 
@@ -272,6 +363,28 @@ def _validate_architecture(pipe) -> None:
             raise ValueError(f"Unsupported transformer {name}; expected {value} for the memory guard")
     if getattr(pipe.vae.config, "z_dim", None) != 64 or getattr(pipe.vae, "spatial_compression_ratio", None) != 16:
         raise ValueError("Unsupported VAE architecture; expected 64 latent channels and 16x spatial compression")
+
+
+def _validate_sampling_sigmas(sigmas, model_id: str) -> int | None:
+    if sigmas is None:
+        if model_id == MODEL_ID:
+            raise ValueError("Turbo checkpoint is missing sample_sigmas; check the cached checkpoint and Diffusers pin")
+        return None
+    if (not isinstance(sigmas, (list, tuple)) or not sigmas
+            or any(type(sigma) not in {int, float} or not math.isfinite(sigma)
+                   or not 0 < sigma <= 1 for sigma in sigmas)
+            or any(a <= b for a, b in zip(sigmas, sigmas[1:]))):
+        raise ValueError("Invalid checkpoint sample_sigmas")
+    return len(sigmas)
+
+
+def _configured_sampling_steps(pipe, settings: Settings) -> int | None:
+    steps = _validate_sampling_sigmas(getattr(pipe.config, "sample_sigmas", None), settings.model_id)
+    if steps is not None:
+        logger.info("[SAMPLING] Checkpoint defines a %d-step sigma schedule; reporting native pipeline steps without rewriting request inputs", steps)
+    else:
+        logger.info("[SAMPLING] No checkpoint sigma schedule; using requested num_inference_steps")
+    return steps
 
 
 def _install_conditioning_encoder_hook(encoder):
@@ -329,7 +442,6 @@ def _phase_tensor_budgets(pipe, torch, offload: str, component_bytes: dict[str, 
 
 
 def load_service(settings: Settings) -> ImageService:
-    _log_model_cache(settings)
     t_resolve = time.perf_counter()
     logger.info("[STARTUP] Checking required cached model; automatic downloads DISABLED")
     try:
@@ -435,6 +547,7 @@ def load_service(settings: Settings) -> ImageService:
         local_files_only=True,
     )
     _validate_architecture(pipe)
+    sampling_steps = _configured_sampling_steps(pipe, settings)
     preflight = RequestPreflight(pipe)
     _install_conditioning_encoder_hook(pipe.text_encoder)
     component_bytes = {name: _module_bytes(getattr(pipe, name)) for name in ("text_encoder", "transformer", "vae")}
@@ -501,7 +614,7 @@ def load_service(settings: Settings) -> ImageService:
     def infer(**kwargs):
         started = time.perf_counter()
         last_logged = started
-        total_steps = kwargs.get("num_inference_steps", 40)
+        total_steps = sampling_steps or kwargs.get("num_inference_steps", DEFAULT_STEPS)
 
         def log_step(_pipe, step, _timestep, callback_kwargs):
             nonlocal last_logged
@@ -593,6 +706,7 @@ def load_service(settings: Settings) -> ImageService:
         release_memory=release_memory,
         job_context=job_context,
         preflight=preflight,
+        sampling_steps=sampling_steps,
     )
 
 
