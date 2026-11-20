@@ -12,7 +12,7 @@ separate columns. See [the measurement protocol](VRAM_MEASUREMENT.md).
 - Four outputs per job: four batch-one calls in sequential mode, or one batch-four call in parallel mode.
 - References are processed at the same resolution as output: 1024 or 2048 square.
 - Original pinned base checkpoint, BF16, 40 steps, seed 42 plus output index.
-- Default `text_encoder` offload policy; VAE tiling and slicing enabled.
+- `text_encoder` offload with VAE tiling and slicing enabled.
 - CFG=2 uses the worker's default empty negative prompt; CFG=1 has no negative branch.
 - Actual tokenizer/template counts, not a fixed assumed text length.
 
@@ -27,7 +27,7 @@ Prompt: Combine the reference images into a coherent studio photograph. Preserve
 ## How to read the columns
 
 - **K/V exact:** logical persistent DiT prefix K/V for this workload. Zero with caching off means no persistent prefix cache, not zero VRAM.
-- **Weights + K/V floor:** `max(all BF16 parameters, resident DiT/VAE parameters + K/V)`. This is only a peak lower bound under default encoder offload, excluding activations, buffers, context, workspaces, and allocator overhead.
+- **Weights + K/V floor:** `max(all BF16 parameters, resident DiT/VAE parameters + K/V)`. This is only a peak lower bound under `text_encoder` offload, excluding activations, buffers, context, workspaces, and allocator overhead.
 - **Eager tensor floor:** a stronger lower bound including the known out-of-place SwiGLU intermediate tensors at last-layer prefill, or cached-step attention/MLP payloads. It accounts for which CFG caches are populated at that point. It applies to this pinned eager implementation, not a fused/compiled alternative. It still excludes many live tensors and all non-PyTorch allocations.
 - **Worker projection:** the current admission formulas plus parameter payload for each phase; the maximum is shown. It is an uncalibrated estimate, not a measurement or guaranteed upper bound.
 - **Later QKV:** payload for the largest single branch's Q/K/V projection outputs in one DiT layer on a later step. It is one activation component, not the full working set. CFG branches execute sequentially.
@@ -39,7 +39,7 @@ Text/template changes alter the small exact K/V offsets shown here.
 
 **80 GiB guard route** models a wholly available 80 GiB device using parameter payloads only;
 driver/context memory, buffers, other processes and fragmentation reduce actual headroom.
-The VRAM guard column reports memory admission; the final route also applies the inline output budget.
+The final route uses the same VRAM admission decision. The worker fits the response after inference.
 Both columns describe four outputs and are repeated across the two forced benchmark rows.
 Admission is not a successful GPU measurement. See [the failure/cost audit](RUNPOD_RISK_REVIEW.md).
 
@@ -115,6 +115,6 @@ Admission is not a successful GPU measurement. See [the failure/cost audit](RUNP
 - Actual encoded responses are compressed, resized, or partially delivered after generation to fit the inline cap. When VRAM requires sequential generation, a partial delivery can stop remaining passes to avoid wasting compute.
 - These checks cover VRAM admission for the fixed fixture. Long positional layouts, malformed inputs, oversized encoded outputs and deployment failures need separate checks.
 
-Sources: pinned [DiT implementation](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/models/transformers/transformer_qwenimage21.py),
-[pipeline](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py),
+Sources: pinned [DiT implementation](https://github.com/huggingface/diffusers/blob/da1d3829cf08d4f329b526d89e17cc035c049d8d/src/diffusers/models/transformers/transformer_qwenimage21.py),
+[pipeline](https://github.com/huggingface/diffusers/blob/da1d3829cf08d4f329b526d89e17cc035c049d8d/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py),
 [tensor inventory](qwen-image-2.1-spec.json), and [worker estimate implementation](../qwen_worker/memory.py).

@@ -109,7 +109,7 @@ def handler(job):
                 logger.error("<X> [CUDA OOM FATAL] Job %s failed after %.2fs", job_id, elapsed)
             logger.error("=" * 80)
             return {
-                "error": "CUDA out of memory. Set CPU_OFFLOAD=text_encoder (or model), reduce dimensions or reference images.",
+                "error": "CUDA out of memory. Reduce output dimensions or reference processing, or use CPU_OFFLOAD=model or CPU_OFFLOAD=sequential.",
                 "refresh_worker": True,
             }
         logger.exception("<X> [INFERENCE ERROR] Job %s failed after %.2fs: %s", job_id, elapsed, exc)

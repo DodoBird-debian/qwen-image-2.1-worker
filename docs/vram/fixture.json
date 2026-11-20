@@ -371,9 +371,9 @@
     }
   },
   "diffusers_source_sha256": {
-    "pipeline_qwenimage21.py": "6985b2f1f25e8dd09ef85c867ebcad184b981f10c0b4f80757ca9cc135b8fa5e",
+    "pipeline_qwenimage21.py": "e75e4ce38d38e194edaac818bba99b2115b4bb2bfdbd15ce03a2813b0fe8856c",
     "transformer_qwenimage21.py": "0eb0555e21ca93195e1fe9389113cafbf0e8822f6454c3001cebb3d21521ebd7",
-    "autoencoder_kl_qwenimage21.py": "afb341db5e9d081e568ae4703119d1141d124aaf2fa9c061b3d4eb80ce73c15b",
+    "autoencoder_kl_qwenimage21.py": "1e29f252dbddd044b84c8b794589001ce94bb125a8f13eb5b226ef30c1e2ea11",
     "scheduling_flow_match_euler_discrete.py": "1af27be5b2f92b7d139d3c50239be5ce3eafc4a7eddf59c2d30689f8ec31e93d"
   }
 }

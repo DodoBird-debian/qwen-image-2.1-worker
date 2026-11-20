@@ -16,6 +16,7 @@ SUPPORTED_MODELS = {BASE_MODEL_ID: BASE_MODEL_REVISION, MODEL_ID: MODEL_REVISION
 DEFAULT_STEPS = 40
 
 
+DEFAULT_OFFLOAD = "model"
 OFFLOAD_MODES = {"none", "text_encoder", "model", "sequential"}
 
 
@@ -31,10 +32,8 @@ class Settings:
     model_id: str = MODEL_ID
     model_revision: str | None = MODEL_REVISION
     model_path: str | None = None
-    # The encoder lives in ordinary CPU memory between conditioning passes and
-    # is staged to GPU on a job's conditioning cache miss. Transformer and VAE
-    # stay resident; this is a large-GPU policy, not automatic device selection.
-    offload: str = "text_encoder"
+    # Stage whole components on the GPU as the pipeline needs them.
+    offload: str = DEFAULT_OFFLOAD
     vae_tiling: bool = True
     # Reject clearly oversized requests using phase estimates. Kernel workspace
     # and allocator peaks vary by GPU, so this cannot guarantee freedom from OOM.
@@ -44,7 +43,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         # Model selectors are read only by explicit provisioning, not serving.
-        offload = os.environ.get("CPU_OFFLOAD", "text_encoder").lower()
+        offload = os.environ.get("CPU_OFFLOAD", DEFAULT_OFFLOAD).lower()
         if offload not in OFFLOAD_MODES:
             raise ValueError("CPU_OFFLOAD must be none, text_encoder, model, or sequential")
         return cls(

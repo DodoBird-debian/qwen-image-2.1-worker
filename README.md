@@ -148,7 +148,7 @@ also decodes previously saved API results.
 | `MODEL_PATH` | Optional complete local snapshot; production detects its variant from the Hub path or checkpoint metadata |
 | `HF_HOME` | Automatic persistent-volume or container-cache path |
 | `HF_TOKEN` | Optional, handled by huggingface_hub |
-| `CPU_OFFLOAD` | `text_encoder` (default), `model`, `none`, or `sequential`; select from measured phase peaks on the target GPU |
+| `CPU_OFFLOAD` | `model` (default), `text_encoder`, `none`, or `sequential`; select from measured phase peaks on the target GPU |
 | `VAE_TILING` | `true`; reduces decoding memory at large resolutions |
 | `MEMORY_GUARD` | `true` (default); conservative phase estimates reject oversize jobs; does not guarantee freedom from OOM |
 
@@ -158,8 +158,8 @@ The Runpod listing targets one 80 GB Ampere GPU. This repository does not contai
 reproducible evidence for the earlier GPU performance and stability claims, so
 those claims have been removed. The current implementation has CPU regression
 coverage; image quality, throughput and memory peaks need validation on the
-deployment GPU. Smaller GPUs may require `model` or `sequential` offload and
-smaller requests. The guard intentionally reserves whole component weights for
+deployment GPU. Smaller GPUs may need smaller requests or `sequential`
+offload. The guard intentionally reserves whole component weights for
 sequential offload until its submodule peaks have been measured.
 
 Parallel KV storage grows with both image count and CFG branches. Sequential

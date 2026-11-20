@@ -2,7 +2,7 @@
   "model_id": "Qwen/Qwen-Image-2.1",
   "model_revision": "790c92633540aa0cb11d9abf19eb46d861714758",
   "researched_at": "2026-10-17",
-  "diffusers_commit": "e0118ade2f60234c41bacf40330a7e2f61108849",
+  "diffusers_commit": "da1d3829cf08d4f329b526d89e17cc035c049d8d",
   "transformers_version": "5.17.0",
   "method": "Read official JSON configs and safetensors headers with bounded HTTP Range requests; count product(shape) for each stored tensor. No model weights were downloaded or inference performed.",
   "configs": {

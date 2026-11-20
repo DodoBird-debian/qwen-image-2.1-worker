@@ -52,7 +52,7 @@
       },
       {
         "key": "CPU_OFFLOAD",
-        "value": "text_encoder"
+        "value": "model"
       },
       {
         "key": "VAE_TILING",

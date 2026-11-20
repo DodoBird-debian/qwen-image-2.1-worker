@@ -24,6 +24,11 @@ class MatrixTests(unittest.TestCase):
     def case(self, case_id):
         return next(c for c in self.cases if c["case_id"] == case_id)
 
+    def test_fixture_uses_the_worker_diffusers_revision(self):
+        requirement = next(line for line in (ROOT / "requirements.txt").read_text().splitlines()
+                           if line.startswith("diffusers @ "))
+        self.assertEqual(requirement.rsplit("@", 1)[1], self.spec["diffusers_commit"])
+
     def test_all_requested_combinations_are_present_once(self):
         dimensions = {(c["cfg_scale"], c["reference_count"], c["kv_cache"], c["execution"], c["output_width"])
                       for c in self.cases}

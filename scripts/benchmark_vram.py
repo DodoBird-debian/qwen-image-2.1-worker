@@ -21,6 +21,7 @@ import sys
 import threading
 import time
 import traceback
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -211,7 +212,7 @@ def install_instrumentation(service, recorder):
         try:
             return original_infer(**kwargs)
         finally:
-            # Runtime resets counters per call; preserve all sequential calls.
+            # Preserve maxima across the sequential calls in this job.
             recorder.torch.cuda.synchronize()
             recorder.boundary()
 
@@ -256,6 +257,8 @@ def run_job(service, recorder, job, label):
             output = service.handle(job)
             if len(output["images"]) != 4:
                 raise RuntimeError("Benchmark did not generate four images")
+            if output["parameters"]["num_inference_steps"] != recorder.case["num_inference_steps"]:
+                raise RuntimeError("Benchmark checkpoint used a different denoising schedule")
             del output
         except Exception as exc:
             status = "oom" if isinstance(exc, recorder.torch.cuda.OutOfMemoryError) else "error"
@@ -382,17 +385,20 @@ def child(args, case, fixture, spec, result_path):
             inputs["negative_prompt"] = fixture["negative_prompt"]
         job = {"id": case["case_id"], "input": inputs}
         labels = ["cold_job"] + [f"warmup_{i+1}" for i in range(args.warmups - 1)] + [f"measured_{i+1}" for i in range(args.repeats)]
-        for label in labels:
-            run = run_job(service, recorder, job, label)
-            result["runs"].append(run)
-            result["status"] = run["status"]
-            save_json(result_path, result)
-            if run["status"] != "ok":
-                break  # Exit the process after OOM/error; do not reuse its state.
-        if result["status"] == "ok" and args.profile_phases:
-            recorder.profile_phases = True
-            result["phase_profile"] = run_job(service, recorder, job, "phase_profile")
-            # Diagnostic failures do not erase completed primary measurements.
+        # The production transport also clamps the configured limit to a
+        # fixed inline ceiling. Relax that ceiling only in this benchmark child.
+        with patch("qwen_worker.service.MAX_INLINE_BYTES", settings.max_output_bytes):
+            for label in labels:
+                run = run_job(service, recorder, job, label)
+                result["runs"].append(run)
+                result["status"] = run["status"]
+                save_json(result_path, result)
+                if run["status"] != "ok":
+                    break  # Exit the process after OOM/error; do not reuse its state.
+            if result["status"] == "ok" and args.profile_phases:
+                recorder.profile_phases = True
+                result["phase_profile"] = run_job(service, recorder, job, "phase_profile")
+                # Diagnostic failures do not erase completed primary measurements.
     except Exception as exc:
         result["status"] = "initialization_error"
         result["error"] = f"{type(exc).__name__}: {exc}"

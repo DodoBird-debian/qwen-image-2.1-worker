@@ -76,7 +76,7 @@ cloned `[B,P,32,128]` K and V tensors in each layer. [1, 2]
 
 The full checkpoint parameter payload, if all parameters are BF16, is
 **32,439,977,672 bytes / 30.212083526 GiB**. The resident DiT/VAE parameter
-payload in default encoder-offload mode is
+payload with `text_encoder` offload is
 **14,905,730,280 bytes / 13.882043101 GiB**. All components coexist on GPU during
 conditioning in this policy. The weight-header inventory is in
 [qwen-image-2.1-spec.json](qwen-image-2.1-spec.json).
@@ -202,7 +202,7 @@ For each case the harness:
 2. Skips a mathematically impossible row if its identified-tensor floor already
    exceeds actual reported GPU capacity. This is marked analytical impossibility,
    not measured OOM. `--attempt-impossible` can explicitly request an actual attempt.
-3. Loads the real worker using default encoder offload and VAE tiling/slicing.
+3. Loads the real worker with `text_encoder` offload, VAE tiling, and VAE slicing.
 4. Disables the memory guard and forces the requested sequential/parallel route
    **inside this benchmark only**. Otherwise the guard might reject or silently
    reroute the case being measured. It also relaxes the inline output-size cap so
@@ -211,8 +211,8 @@ For each case the harness:
    as the default single warmup. Each job has four outputs with identical seeds
    across cases; conditioning reuse follows the real job lifecycle.
 6. Preserves maxima between pipeline calls, synchronizing only at job/call
-   boundaries for primary runs. This matters because the existing worker resets
-   CUDA peak statistics separately for each pipeline call. Primary runs do not
+   boundaries for primary runs. The worker resets CUDA peak statistics once
+   per job. Primary runs do not
    insert per-step/per-phase GPU barriers. An optional `--profile-phases` adds a
    separate diagnostic job with synchronized per-phase counter resets; its values
    are not mixed into the primary repeat statistics.
@@ -253,8 +253,8 @@ that some cases cannot fit; it cannot prove that remaining cases will fit.
 
 ## Research sources
 
-1. [Pinned Qwen-Image-2.1 DiT and SwiGLU implementation](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/models/transformers/transformer_qwenimage21.py).
-2. [Pinned Qwen-Image-2.1 pipeline, CFG, and cache lifecycle](https://github.com/huggingface/diffusers/blob/e0118ade2f60234c41bacf40330a7e2f61108849/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py).
+1. [Pinned Qwen-Image-2.1 DiT and SwiGLU implementation](https://github.com/huggingface/diffusers/blob/da1d3829cf08d4f329b526d89e17cc035c049d8d/src/diffusers/models/transformers/transformer_qwenimage21.py).
+2. [Pinned Qwen-Image-2.1 pipeline, CFG, and cache lifecycle](https://github.com/huggingface/diffusers/blob/da1d3829cf08d4f329b526d89e17cc035c049d8d/src/diffusers/pipelines/qwenimage21/pipeline_qwenimage21.py).
 3. [PyTorch 2.8 CUDA semantics and memory management](https://docs.pytorch.org/docs/2.8/notes/cuda.html).
 4. [PyTorch 2.8 peak allocated memory](https://docs.pytorch.org/docs/2.8/generated/torch.cuda.memory.max_memory_allocated.html) and [peak-stat reset](https://docs.pytorch.org/docs/2.8/generated/torch.cuda.memory.reset_peak_memory_stats.html).
 5. [PyTorch 2.8: understanding CUDA memory and non-PyTorch allocations](https://docs.pytorch.org/docs/2.8/torch_cuda_memory.html).

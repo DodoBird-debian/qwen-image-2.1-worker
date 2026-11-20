@@ -22,16 +22,16 @@
           "name": "CPU offloading",
           "type": "string",
           "description": "Select offload strategy. 'text_encoder' retains the DiT and VAE on GPU; encoder weights also need space during conditioning. Profile the chosen GPU and request sizes.",
-          "default": "text_encoder",
+          "default": "model",
           "advanced": true,
           "options": [
             {
-              "label": "Text Encoder Offload (Recommended)",
-              "value": "text_encoder"
+              "label": "Whole Model Offload (Default)",
+              "value": "model"
             },
             {
-              "label": "Whole Model Offload",
-              "value": "model"
+              "label": "Text Encoder Offload",
+              "value": "text_encoder"
             },
             {
               "label": "Sequential Offload",

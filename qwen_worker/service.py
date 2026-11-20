@@ -195,7 +195,7 @@ class ImageService:
                             break
                 # Errors (including OOM) propagate to the existing handler;
                 # retries here retain failed tensors and hide deterministic bugs.
-                result["inference_seconds"] = round(time.perf_counter() - started, 3)
+                result["inference_seconds"] = round(inference_seconds, 3)
                 response_bytes = self._fit_output(result, originals, request)
                 succeeded = True
             finally:

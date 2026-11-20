@@ -323,6 +323,22 @@ class SnapshotTests(unittest.TestCase):
         load.assert_not_called()
         start.assert_not_called()
 
+    def test_model_offload_defaults_match_runtime_and_hub(self):
+        root = Path(__file__).resolve().parents[1]
+        hub = json.loads((root / ".runpod" / "hub.json").read_text())
+        tests = json.loads((root / ".runpod" / "tests.json").read_text())
+        hub_offload = next(entry["input"]["default"] for entry in hub["config"]["env"]
+                           if entry["key"] == "CPU_OFFLOAD")
+        test_offload = next(entry["value"] for entry in tests["config"]["env"]
+                            if entry["key"] == "CPU_OFFLOAD")
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(Settings.from_env().offload, "model")
+        self.assertEqual(Settings().offload, "model")
+        self.assertEqual(hub_offload, "model")
+        self.assertEqual(test_offload, "model")
+        with patch.dict(os.environ, {"CPU_OFFLOAD": "text_encoder"}, clear=True):
+            self.assertEqual(Settings.from_env().offload, "text_encoder")
+
     def test_hub_test_flag_is_only_set_in_test_metadata(self):
         root = Path(__file__).resolve().parents[1]
         tests = json.loads((root / ".runpod" / "tests.json").read_text())
@@ -541,6 +557,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
             def from_pretrained(cls, source, **kwargs):
                 return cls()
 
+            def enable_model_cpu_offload(self):
+                events.append("model_offload")
+
             def set_progress_bar_config(self, **kwargs):
                 pass
 
@@ -584,7 +603,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         return service, events
 
     def test_encoder_evicted_before_vae_and_not_loaded_on_cache_hit(self):
-        service, events = self.load_fake_service()
+        service, events = self.load_fake_service(Settings(offload="text_encoder"))
         with service.job_context():
             service.pipeline(prompt="a")
             service.pipeline(prompt="a")
@@ -599,6 +618,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_startup_summary_separates_loading_stages_and_fingerprints_source(self):
         with self.assertLogs(runtime.logger, level="INFO") as logs:
             self.load_fake_service()
+        self.assertTrue(any("Enabled standard Diffusers model CPU offload" in line for line in logs.output))
         summary = next(line for line in logs.output if "[STARTUP SUMMARY]" in line)
         for field in ("cache=", "imports=", "device/diagnostics=", "model_load=", "placement=", "service_total=", "source="):
             self.assertIn(field, summary)
@@ -607,7 +627,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(fingerprint, runtime.source_fingerprint())
 
     def test_encoder_failure_releases_placement_and_job_cache(self):
-        service, events = self.load_fake_service()
+        service, events = self.load_fake_service(Settings(offload="text_encoder"))
         # The infer closure captures the derived pipeline instance.
         pipeline = next(cell.cell_contents for cell in service.pipeline.__closure__ if hasattr(cell.cell_contents, "conditioning_context"))
         pipeline.fail = True

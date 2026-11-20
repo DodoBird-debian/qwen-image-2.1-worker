@@ -786,8 +786,8 @@ fits or that this research measured its performance. [S12, S15]
 | Offload mode | Worker behavior | Important memory implication |
 |---|---|---|
 | `none` | All components on CUDA | About 30.212 GiB of parameter payload before runtime overhead |
-| `text_encoder`, default | DiT + VAE resident; conditioner staged to CUDA during conditioning, then returned to CPU | About 13.882 GiB of DiT/VAE parameter payload during denoising; conditioning can still place the full parameter set on CUDA |
-| `model` | Diffusers model CPU offload hooks | Components move by pipeline phase; request-local K/V is not automatically offloaded |
+| `text_encoder` | DiT + VAE resident; conditioner staged to CUDA during conditioning, then returned to CPU | About 13.882 GiB of DiT/VAE parameter payload during denoising; conditioning can still place the full parameter set on CUDA |
+| `model`, default | Diffusers model CPU offload hooks | Components move by pipeline phase; request-local K/V is not automatically offloaded |
 | `sequential` | Diffusers sequential CPU offload hooks | Finer module movement, usually more transfers; actual peaks require measurement |
 
 The VAE enables batch slicing, and tiling is enabled by default in this worker.

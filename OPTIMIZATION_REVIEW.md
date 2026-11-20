@@ -114,7 +114,7 @@ Neither table is a complete peak-VRAM requirement.
    therefore receive the same estimate. Treat batch admission as provisional
    until representative phase peaks are measured.
 
-2. **Default encoder offload still has a full-weight conditioning peak.**
+2. **Text-encoder offload has a full-weight conditioning peak.**
    In `text_encoder` mode the DiT and VAE stay resident while the conditioner
    moves onto the GPU. Parameter payload during conditioning is therefore about
    30.212 GiB, versus about 13.882 GiB during denoising after encoder eviction.

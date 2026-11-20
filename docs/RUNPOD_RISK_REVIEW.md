@@ -79,7 +79,7 @@ The full table and byte-level exports are:
 The fixed workload is four outputs, CFG 1/2, 1/4/10 references, prefix cache
 on/off, forced sequential/parallel execution, and 1024/2048-square outputs and
 reference processing. That is `2 * 3 * 2 * 2 * 2 = 48` cases. All use BF16,
-40 steps, the saved prompt, and default `text_encoder` offload with VAE tiling
+40 steps, the saved prompt, and explicit `text_encoder` offload with VAE tiling
 and slicing. This follows the repository's existing explicit fixture.
 
 Persistent prefix K/V uses **512 KiB per token per physical output per branch**.

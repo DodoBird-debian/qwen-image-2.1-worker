@@ -218,6 +218,32 @@ class GenerationRoutingTests(unittest.TestCase):
 
 
 class JobLogTests(unittest.TestCase):
+    def test_response_inference_time_counts_only_pipeline_calls(self):
+        clock = 0.0
+
+        def pipeline(**kwargs):
+            nonlocal clock
+            clock += 1.25
+            return SimpleNamespace(images=[Image.new("RGB", (256, 256))])
+
+        service = ImageService(pipeline, lambda seed: seed, Settings(),
+                               memory_budget=lambda: 13 * GIB // 4)
+        append_images = service._append_images
+
+        def slow_output(*args):
+            nonlocal clock
+            append_images(*args)
+            clock += 7.0
+
+        with patch.object(service, "_append_images", side_effect=slow_output), \
+                patch("qwen_worker.service.time.perf_counter", side_effect=lambda: clock):
+            result = service.handle({"input": {
+                "prompt": "test", "width": 256, "height": 256, "num_images": 2,
+            }})
+        self.assertEqual(len(result["images"]), 2)
+        self.assertEqual(result["inference_seconds"], 2.5)
+        self.assertEqual(clock, 16.5)
+
     def test_final_summary_reports_actual_route_time_and_whole_job_peaks(self):
         width = 1024
         for budget, expected in ((80 * GIB, "parallel"), (4 * GIB, "sequential")):
