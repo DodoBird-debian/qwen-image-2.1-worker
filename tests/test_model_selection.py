@@ -1,5 +1,6 @@
 """Serving discovers cached models; only explicit tests/provisioning use selectors."""
 
+import asyncio
 import json
 import os
 import runpy
@@ -146,7 +147,7 @@ class ModelSelectionTests(unittest.TestCase):
                 def register(config):
                     events.append("queue")
                     for _ in range(2):
-                        config["handler"]({"id": "test", "input": {"prompt": "cube"}})
+                        asyncio.run(config["handler"]({"id": "test", "input": {"prompt": "cube"}}))
                 with patch.dict(os.environ, {}, clear=True), \
                         patch.object(runtime, "_cache_roots", return_value=[cache]), \
                         patch.object(runtime, "load_service", side_effect=load) as loader, \
@@ -181,6 +182,41 @@ class ModelSelectionTests(unittest.TestCase):
                 if not selectors.get("MODEL_ID"):
                     self.assertTrue(any("Turbo default" in line for line in logs.output))
                 detect.assert_not_called()
+
+    def test_explicit_test_path_must_match_requested_checkpoint(self):
+        base = self.snapshot(BASE_MODEL_ID, "a" * 40)
+        turbo = self.snapshot(MODEL_ID, "a" * 40)
+        original = {"QWEN_HUB_TEST_PROVISION": "true", "MODEL_ID": BASE_MODEL_ID}
+
+        for path, revision, message in [
+            (turbo, "a" * 40, "expected Qwen/Qwen-Image-2.1"),
+            (base, "b" * 40, "MODEL_PATH revision is"),
+        ]:
+            with self.subTest(path=path, revision=revision), patch.dict(
+                os.environ, {**original, "MODEL_PATH": str(path), "MODEL_REVISION": revision}, clear=True,
+            ):
+                with self.assertRaisesRegex(runtime.ModelCacheError, message):
+                    runtime.prepare_startup_model(Settings.from_env())
+
+        ref = base.parent.parent / "refs" / "main"
+        ref.parent.mkdir()
+        ref.write_text("a" * 40)
+        for revision in ("a" * 40, "main"):
+            with self.subTest(revision=revision), patch.dict(
+                os.environ, {**original, "MODEL_PATH": str(base), "MODEL_REVISION": revision}, clear=True,
+            ):
+                selected = runtime.prepare_startup_model(Settings.from_env())
+                self.assertEqual(selected.model_path, str(base))
+                self.assertEqual(selected.model_revision, "a" * 40)
+
+    def test_unpacked_test_snapshot_does_not_report_the_requested_revision(self):
+        path = make_snapshot(self.root / "unpacked")
+        with patch.dict(os.environ, {
+            "QWEN_HUB_TEST_PROVISION": "true", "MODEL_PATH": str(path),
+        }, clear=True), self.assertLogs(runtime.logger, level="WARNING") as logs:
+            selected = runtime.prepare_startup_model(Settings.from_env())
+        self.assertIsNone(selected.model_revision)
+        self.assertIn("no verifiable revision", "\n".join(logs.output))
 
     def test_bad_test_model_or_flag_fails_before_any_download(self):
         for env in ({"QWEN_HUB_TEST_PROVISION": "true", "MODEL_ID": "Other/Model"},

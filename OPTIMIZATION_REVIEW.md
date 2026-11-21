@@ -21,7 +21,9 @@ establish GPU performance or freedom from OOM. The follow-up research below now
 provides all **48 requested cases**, with exact cache bytes, source-derived
 live-tensor lower bounds, and a reproducible CUDA measurement harness.
 
-## Confirmed finding: validate the actual DiT positional layout
+## Fixed · Validate the actual DiT positional layout
+
+The worker now validates the positional layout before conditioning. The original failure is described below. [Fix and verification](docs/FIXES_IMPLEMENTED.md)
 
 **Priority: P2.** [requests.py](qwen_worker/requests.py) validates positive and
 negative prompts by character count, permitting up to 20,000 characters.

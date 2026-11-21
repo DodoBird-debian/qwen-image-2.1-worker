@@ -298,8 +298,31 @@ def run_job(service, recorder, job, label):
     }
 
 
+def pinned_benchmark_settings(settings):
+    """Resolve the actual snapshot before loading weights or publishing its identity."""
+    from dataclasses import replace
+    from qwen_worker.runtime import detect_cached_model, resolve_cached_model
+    path = Path(resolve_cached_model(settings)).resolve()
+    detected = detect_cached_model(replace(settings, model_path=str(path)))
+    if (detected.model_id, detected.model_revision) != (settings.model_id, settings.model_revision):
+        raise ValueError(f"Benchmark needs {settings.model_id} at {settings.model_revision}; "
+                         f"resolved {detected.model_id} at {detected.model_revision or 'unknown revision'}")
+    return detected
+
+
+def check_source_hashes(paths, expected):
+    hashes = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+    if hashes != expected:
+        raise RuntimeError("Installed Diffusers source differs from the pinned implementation; refresh the analysis before comparing")
+    return hashes
+
+
+def benchmark_output_limit(settings):
+    return patch("qwen_worker.service.MAX_INLINE_BYTES", settings.max_output_bytes)
+
+
 def child(args, case, fixture, spec, result_path):
-    result = {"case": case, "status": "initializing", "runs": [], "model_revision": spec["model_revision"],
+    result = {"case": case, "status": "initializing", "runs": [], "requested_model_revision": spec["model_revision"],
               "completed": False, "expected_measured_repeats": args.repeats, "warmup_jobs": args.warmups}
     try:
         import torch
@@ -323,6 +346,8 @@ def child(args, case, fixture, spec, result_path):
                             memory_guard=False, max_output_bytes=1_000_000_000)
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
+        settings = pinned_benchmark_settings(settings)
+        result["model_revision"] = settings.model_revision
         service = load_service(settings)
         torch.cuda.synchronize()
         result["load_peak_allocated_bytes"] = torch.cuda.max_memory_allocated()
@@ -340,10 +365,9 @@ def child(args, case, fixture, spec, result_path):
             raise RuntimeError("Use the pinned worker runtime (PyTorch 2.8.0, Transformers 5.17.0) for this matrix")
         from diffusers import QwenImage21Pipeline, QwenImage21Transformer2DModel, AutoencoderKLQwenImage21, FlowMatchEulerDiscreteScheduler
         source_classes = [QwenImage21Pipeline, QwenImage21Transformer2DModel, AutoencoderKLQwenImage21, FlowMatchEulerDiscreteScheduler]
-        hashes = {Path(inspect.getfile(cls)).name: hashlib.sha256(Path(inspect.getfile(cls)).read_bytes()).hexdigest() for cls in source_classes}
-        if hashes != fixture["diffusers_source_sha256"]:
-            raise RuntimeError("Installed Diffusers source differs from the pinned implementation; refresh the analysis before comparing")
-        result["diffusers_source_sha256"] = hashes
+        result["diffusers_source_sha256"] = check_source_hashes(
+            (Path(inspect.getfile(cls)) for cls in source_classes), fixture["diffusers_source_sha256"]
+        )
         result["diffusers_commit"] = spec["diffusers_commit"]
         result["cuda_runtime"] = torch.version.cuda
         result["cudnn_version"] = torch.backends.cudnn.version()
@@ -387,7 +411,7 @@ def child(args, case, fixture, spec, result_path):
         labels = ["cold_job"] + [f"warmup_{i+1}" for i in range(args.warmups - 1)] + [f"measured_{i+1}" for i in range(args.repeats)]
         # The production transport also clamps the configured limit to a
         # fixed inline ceiling. Relax that ceiling only in this benchmark child.
-        with patch("qwen_worker.service.MAX_INLINE_BYTES", settings.max_output_bytes):
+        with benchmark_output_limit(settings):
             for label in labels:
                 run = run_job(service, recorder, job, label)
                 result["runs"].append(run)
@@ -460,13 +484,13 @@ def main():
                 completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout)
                 if not destination.exists():
                     save_json(destination, {"case": c, "status": "process_failed", "exit_code": completed.returncode,
-                                            "model_revision": spec["model_revision"], "completed": True, "runs": []})
+                                            "requested_model_revision": spec["model_revision"], "completed": True, "runs": []})
                 elif completed.returncode != 0:
                     partial = json.loads(destination.read_text())
                     partial.update(status="process_failed", exit_code=completed.returncode, completed=True)
                     save_json(destination, partial)
             except subprocess.TimeoutExpired:
-                save_json(destination, {"case": c, "status": "timeout", "model_revision": spec["model_revision"],
+                save_json(destination, {"case": c, "status": "timeout", "requested_model_revision": spec["model_revision"],
                                         "completed": True, "runs": []})
         value = json.loads(destination.read_text())
         summaries.append({"case_id": case_id, "status": value["status"], "result_file": str(destination)})

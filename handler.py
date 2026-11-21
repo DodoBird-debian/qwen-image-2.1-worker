@@ -5,6 +5,7 @@ import time
 _PROCESS_STARTED = time.perf_counter()
 
 import argparse
+import asyncio
 import base64
 import json
 import logging
@@ -50,6 +51,7 @@ logger.info("[STARTUP] RunPod SDK import=%.3fs; process elapsed=%.3fs",
 from qwen_worker.config import Settings
 from qwen_worker.requests import InputError
 from qwen_worker.runtime import load_service, prepare_startup_model, source_fingerprint
+from qwen_worker.service import GenerationStopped, check_stop
 logger.info("[STARTUP] Worker source fingerprint=%s", source_fingerprint())
 
 _service = None
@@ -72,7 +74,7 @@ def get_service():
     return _service
 
 
-def handler(job):
+def handler(job, *, stop_event: threading.Event | None = None):
     job_id = job.get("id", "unknown_job") if isinstance(job, dict) else "raw_input"
     logger.info("=" * 80)
     logger.info(">>> [RUNPOD JOB RECEIVED] ID: %s", job_id)
@@ -80,13 +82,18 @@ def handler(job):
     t0 = time.perf_counter()
 
     try:
+        check_stop(stop_event)
         service = get_service()
-        result = service.handle(job)
+        result = service.handle(job, stop_event=stop_event)
+        check_stop(stop_event)
         elapsed = time.perf_counter() - t0
         logger.info("-" * 80)
         logger.info("<<< [RUNPOD JOB COMPLETED] ID: %s in %.2fs", job_id, elapsed)
         logger.info("=" * 80)
         return result
+    except GenerationStopped:
+        logger.info("[JOB %s] Stopped after inference cleanup", job_id)
+        raise
     except InputError as exc:
         elapsed = time.perf_counter() - t0
         logger.warning("-" * 80)
@@ -117,6 +124,32 @@ def handler(job):
         return {"error": f"Inference error: {str(exc)}", "refresh_worker": True}
 
 
+async def serverless_handler(job):
+    # RunPod cancels the awaiting task. Shield the thread so the job stays
+    # active until cooperative cancellation has unwound the GPU work.
+    stop_event = threading.Event()
+    work = asyncio.create_task(asyncio.to_thread(handler, job, stop_event=stop_event))
+    try:
+        return await asyncio.shield(work)
+    except asyncio.CancelledError:
+        stop_event.set()
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not work.cancelled():
+            try:
+                work.result()
+            except GenerationStopped:
+                pass
+            except Exception:
+                logger.exception("Inference failed while the cancelled job was unwinding")
+        raise
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--local", type=Path, help="Run one input JSON on a CUDA GPU and exit")
@@ -140,5 +173,5 @@ if __name__ == "__main__":
     else:
         # Pre-warm service before registering with RunPod serverless queue
         get_service()
-        runpod.serverless.start({"handler": handler})
+        runpod.serverless.start({"handler": serverless_handler})
 

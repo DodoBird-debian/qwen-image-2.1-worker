@@ -188,8 +188,12 @@ python scripts/benchmark_vram.py --device 0 \
 python scripts/vram_matrix.py --results-dir outputs/vram-full
 ```
 
-`MODEL_PATH` may select a predownloaded snapshot; the benchmark checks component
-parameter counts and BF16 dtype. It also checks the pinned Diffusers source-file
+`vram_matrix.py --output-dir DIRECTORY` writes the CSV, JSON, and Markdown
+report to that directory. The default invocation updates the repository artifacts.
+
+`MODEL_PATH` may select a predownloaded snapshot with a verifiable revision.
+The harness checks that the resolved snapshot is the pinned Base revision
+before loading weights. It then checks component parameter counts and BF16 dtype. It also checks the pinned Diffusers source-file
 hashes and runtime versions, and verifies observed prefix shapes and cache bytes
 against the fixture. A mismatch is an error, not a comparable measurement.
 Joining also requires matching GPU/runtime/fixture/instrumentation fingerprints

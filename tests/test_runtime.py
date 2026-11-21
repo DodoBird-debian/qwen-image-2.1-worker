@@ -1,11 +1,13 @@
 """CPU-only runtime contract tests; no models, CUDA or network are required."""
 
+import asyncio
 import json
 import errno
 import os
 import runpy
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
@@ -16,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from qwen_worker.config import BASE_MODEL_ID, BASE_MODEL_REVISION, DEFAULT_STEPS, MODEL_ID, MODEL_REVISION, SUPPORTED_MODELS, Settings, configure_cache
 from qwen_worker import runtime
+from qwen_worker.service import GenerationStopped
 
 
 def make_snapshot(path, *, turbo=True):
@@ -43,6 +46,21 @@ class SnapshotTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.cache = self.root / "hub"
         self.model_cache = self.cache / f"models--{MODEL_ID.replace('/', '--')}"
+
+    def test_benchmark_only_loads_a_verifiable_pinned_base_snapshot(self):
+        from scripts.benchmark_vram import pinned_benchmark_settings
+        snapshots = self.root / "models--Qwen--Qwen-Image-2.1/snapshots"
+        for revision in (BASE_MODEL_REVISION, "b" * 40, "unversioned"):
+            path = make_snapshot(snapshots / revision, turbo=False)
+            settings = Settings(model_id=BASE_MODEL_ID, model_revision=BASE_MODEL_REVISION, model_path=str(path))
+            with self.subTest(revision=revision):
+                if revision == BASE_MODEL_REVISION:
+                    resolved = pinned_benchmark_settings(settings)
+                    self.assertEqual(resolved.model_path, str(path))
+                    self.assertEqual(resolved.model_revision, revision)
+                else:
+                    with self.assertRaisesRegex(ValueError, "Benchmark needs"):
+                        pinned_benchmark_settings(settings)
 
     def test_explicit_complete_snapshot(self):
         path = make_snapshot(self.root / "explicit")
@@ -283,7 +301,7 @@ class SnapshotTests(unittest.TestCase):
             events.append("queue")
             # Warm jobs use the already-loaded service, not the downloader.
             for _ in range(2):
-                config["handler"]({"id": "test", "input": {"prompt": "cube"}})
+                asyncio.run(config["handler"]({"id": "test", "input": {"prompt": "cube"}}))
         start = Mock(side_effect=register)
         with patch.dict(os.environ, {"QWEN_HUB_TEST_PROVISION": "true"}, clear=True), \
                 patch.object(sys, "argv", ["handler.py"]), \
@@ -551,6 +569,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.transformer = FakeModule("transformer", 20)
                 self.vae = FakeModule("vae", 5)
                 self.fail = False
+                self.stop_on_step = None
                 self.config = SimpleNamespace(sample_sigmas=[1 - i / 10 for i in range(8)] if selected.model_id == MODEL_ID else None)
 
             @classmethod
@@ -579,6 +598,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.prepare_latents(None, 1, 64, 32, 32, "bf16", "cuda", None)
                 self.callback_inputs = callback_on_step_end_tensor_inputs
                 for step in range(len(self.config.sample_sigmas) if self.config.sample_sigmas else num_inference_steps):
+                    if self.stop_on_step is not None:
+                        events.append(("step", step))
+                        if step == 1:
+                            self.stop_on_step.set()
                     self.callback_result = callback_on_step_end(self, step, None, {})
                 return SimpleNamespace(images=[])
 
@@ -651,6 +674,21 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(pipeline.callback_result, {})
         self.assertTrue(any("step 1/8" in line for line in logs.output))
         self.assertTrue(any("step 8/8" in line for line in logs.output))
+
+    def test_stop_signal_at_step_boundary_releases_pipeline_resources(self):
+        service, events = self.load_fake_service(Settings(offload="text_encoder"))
+        pipeline = next(cell.cell_contents for cell in service.pipeline.__closure__
+                        if hasattr(cell.cell_contents, "conditioning_context"))
+        stop_event = threading.Event()
+        pipeline.stop_on_step = stop_event
+        with self.assertRaises(GenerationStopped), service.job_context():
+            service.pipeline(prompt="a", stop_event=stop_event)
+        self.assertEqual([entry for entry in events if isinstance(entry, tuple) and entry[0] == "step"],
+                         [("step", 0), ("step", 1)])
+        self.assertIsNone(pipeline._conditioning_cache)
+        self.assertEqual(pipeline.text_encoder.tensor.device.type, "cpu")
+        self.assertIn("clear_vae", events)
+        self.assertIn("free_hooks", events)
 
     def test_base_pipeline_uses_requested_steps_with_shared_dependency(self):
         service, events = self.load_fake_service(Settings(model_id=BASE_MODEL_ID, model_revision=BASE_MODEL_REVISION))

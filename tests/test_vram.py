@@ -21,6 +21,52 @@ class MatrixTests(unittest.TestCase):
         self.spec = json.loads((ROOT / "docs/qwen-image-2.1-spec.json").read_text())
         self.cases = build_cases(self.fixture, self.spec)
 
+    def test_custom_matrix_output_keeps_repo_report_and_writes_all_three_outputs(self):
+        import shutil
+        from scripts import vram_matrix
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs = root / "docs"
+            (docs / "vram").mkdir(parents=True)
+            shutil.copy(ROOT / "docs/vram/fixture.json", docs / "vram")
+            shutil.copy(ROOT / "docs/qwen-image-2.1-spec.json", docs)
+            report = docs / "VRAM_COMPARISON.md"
+            report.write_text("private comparison notes")
+            output = root / "experiment"
+            with patch.object(vram_matrix, "ROOT", root), patch("sys.argv", ["matrix", "--output-dir", str(output)]):
+                vram_matrix.main()
+            self.assertEqual(report.read_text(), "private comparison notes")
+            self.assertEqual({p.name for p in output.iterdir()}, {"cases.csv", "cases.json", report.name})
+            self.assertIn("48-case", (output / report.name).read_text())
+
+    def test_benchmark_runtime_pin_and_transport_ceiling(self):
+        from hashlib import sha256
+        from scripts.benchmark_vram import benchmark_output_limit, check_source_hashes
+        from qwen_worker import service
+        requirements = (ROOT / "requirements.txt").read_text()
+        self.assertIn("diffusers.git@" + self.spec["diffusers_commit"], requirements)
+        self.assertEqual(set(self.fixture["diffusers_source_sha256"]), {
+            "pipeline_qwenimage21.py", "transformer_qwenimage21.py", "autoencoder_kl_qwenimage21.py",
+            "scheduling_flow_match_euler_discrete.py",
+        })
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "pipeline_qwenimage21.py"
+            source.write_bytes(b"pinned fixture source")
+            expected = {source.name: sha256(source.read_bytes()).hexdigest()}
+            self.assertEqual(check_source_hashes([source], expected), expected)
+            source.write_bytes(b"different fixture source")
+            with self.assertRaisesRegex(RuntimeError, "differs from the pinned implementation"):
+                check_source_hashes([source], expected)
+        settings = Settings(max_output_bytes=service.MAX_INLINE_BYTES * 2)
+        worker = ImageService(None, None, settings)
+        result = {"data": "x" * service.MAX_INLINE_BYTES}
+        with self.assertRaises(InputError):
+            worker._check_output_size(result)
+        with benchmark_output_limit(settings):
+            self.assertGreater(worker._check_output_size(result), len(result["data"]))
+        with self.assertRaises(InputError):
+            worker._check_output_size(result)
+
     def case(self, case_id):
         return next(c for c in self.cases if c["case_id"] == case_id)
 

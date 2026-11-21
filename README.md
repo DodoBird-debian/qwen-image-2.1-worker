@@ -126,18 +126,30 @@ quality if necessary, then proportionally resizes down to a minimum 256-pixel
 short side (never enlarging smaller outputs). If it still does not fit, it switches
 to JPEG and tries progressively lower quality, down to 1. JPEG flattens transparency
 on white. If the full batch still cannot fit, the worker returns the largest fitting
-subset, preserving the selected images' seeds and order. It checks all subsets,
-so a large first image cannot prevent sending more smaller images. In sequential
-mode, a partial result stops remaining generation passes to avoid wasting compute.
-No inference is retried. A top-level `delivery` object reports `requested_images`,
-`returned_images`, `partial`, and human-readable `warnings` about JPEG, transparency,
-and omitted images. Its bytes are included in the size check. Clients must accept
-fewer images and inspect each actual MIME type. Returned width and height always
-describe the encoded image, which may be smaller than the request. Compression
-uses the original CPU pixels. Compression stages, sizes, quality, and dimensions are logged. Clients that
+subset, preserving the selected images' seeds and order. It checks all subsets
+and keeps each original encoding where the total budget allows. One response
+can contain different dimensions or file formats. In sequential mode, a
+transport-limited partial result stops remaining generation passes. If a later
+pass fails, earlier valid images are returned as partial output when they fit,
+and a runtime failure requests worker refresh after delivery. No inference is
+retried.
+
+A top-level `delivery` object reports `requested_images`, `returned_images`,
+`partial`, and human-readable `warnings` when the worker reduces quality or
+dimensions, changes format, flattens alpha, or returns fewer images. Its bytes
+are included in the budget. Returned width, height, and MIME describe each
+encoded image. Compression uses the original CPU pixels. Compression stages,
+sizes, quality, and dimensions are logged. Clients that
 map results onto an edit canvas must scale coordinates using the returned dimensions.
 `scripts/client.py --decode response.json`
-also decodes previously saved API results.
+also decodes previously saved API results. The client uses Pillow to verify
+each downloaded frame before saving it.
+
+For serverless jobs, the SDK processes stop signals while inference runs in a
+thread. The worker stops at the next denoising step or generation-pass
+checkpoint and releases the pipeline resources before the SDK releases the
+job slot. A GPU operation already in progress can finish before the stop takes
+effect.
 
 ## Configuration
 

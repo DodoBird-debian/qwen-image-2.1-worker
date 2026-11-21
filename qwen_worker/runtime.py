@@ -18,7 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from qwen_worker.config import BASE_MODEL_ID, DEFAULT_STEPS, MODEL_ID, SUPPORTED_MODELS, Settings, configure_cache
-from qwen_worker.service import ImageService
+from qwen_worker.service import ImageService, check_stop
 from qwen_worker.preflight import RequestPreflight
 
 logger = logging.getLogger("qwen_worker.runtime")
@@ -290,11 +290,27 @@ def prepare_startup_model(settings: Settings) -> Settings:
 
 def download_model(settings: Settings) -> str:
     """Explicit provisioning command only; never called by the serving runtime."""
+    if settings.model_path:
+        source = resolve_cached_model(settings)
+        path = Path(source).resolve()
+        model, revision = _snapshot_identity(path)
+        if model != settings.model_id:
+            raise ModelCacheError(f"MODEL_PATH contains {model}; expected {settings.model_id}.")
+        requested = settings.model_revision
+        if revision is None:
+            logger.warning("MODEL_PATH has no verifiable revision: %s", path)
+        elif requested and re.fullmatch(r"[0-9a-fA-F]{40}", requested):
+            if revision.lower() != requested.lower():
+                raise ModelCacheError(f"MODEL_PATH revision is {revision}; expected {requested}.")
+        elif requested:
+            snapshot = _cached_snapshot(path.parent.parent.parent, settings)
+            if not snapshot or snapshot.resolve() != path:
+                raise ModelCacheError(f"MODEL_PATH does not match the cached ref {requested!r}.")
+        return source
     try:
         return resolve_cached_model(settings)
     except ModelCacheError:
-        if settings.model_path:
-            raise
+        pass
     cache = configure_cache()
     from huggingface_hub import snapshot_download
 
@@ -348,7 +364,11 @@ def prepare_hub_test_model(settings: Settings) -> Settings:
     )
     started = time.perf_counter()
     source = download_model(settings)
-    _validate_sampling_sigmas(_read_json(Path(source) / "model_index.json").get("sample_sigmas"), settings.model_id)
+    if settings.model_path:
+        _, revision = _snapshot_identity(Path(source).resolve())
+        settings = replace(settings, model_revision=revision)
+    else:
+        _validate_sampling_sigmas(_read_json(Path(source) / "model_index.json").get("sample_sigmas"), settings.model_id)
     logger.info("[HUB TEST PROVISION] Complete in %.2fs; entering cache-only model loading", time.perf_counter() - started)
     return replace(settings, model_path=source)
 
@@ -611,13 +631,15 @@ def load_service(settings: Settings) -> ImageService:
 
     pipe.set_progress_bar_config(disable=True)
 
-    def infer(**kwargs):
+    def infer(*, stop_event=None, **kwargs):
+        check_stop(stop_event)
         started = time.perf_counter()
         last_logged = started
         total_steps = sampling_steps or kwargs.get("num_inference_steps", DEFAULT_STEPS)
 
         def log_step(_pipe, step, _timestep, callback_kwargs):
             nonlocal last_logged
+            check_stop(stop_event)
             now = time.perf_counter()
             done = step + 1
             if done == 1 or done == total_steps or now - last_logged >= 5:

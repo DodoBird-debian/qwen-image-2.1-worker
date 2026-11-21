@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import io
 import json
 import os
 import re
@@ -9,6 +10,8 @@ import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+
+from PIL import Image
 
 API_ROOT = "https://api.runpod.ai/v2"
 MAX_RUN_REQUEST_BYTES = 10_000_000
@@ -35,24 +38,44 @@ def save_images(result: dict, destination: Path) -> dict:
     if "error" in result:
         raise RuntimeError(str(result["error"]))
     output = result.get("output", result)
-    if not isinstance(output, dict) or not output.get("images"):
+    if isinstance(output, dict) and "error" in output:
+        raise RuntimeError(str(output["error"]))
+    if not isinstance(output, dict) or not isinstance(output.get("images"), list) or not output["images"]:
         raise RuntimeError("The response contains no generated images")
     destination.mkdir(parents=True, exist_ok=True)
     metadata = {key: value for key, value in output.items() if key != "images"}
     metadata["images"] = []
+    warnings = []
     extensions = {"image/png": "png", "image/jpeg": "jpeg", "image/webp": "webp"}
     for index, image in enumerate(output["images"]):
-        extension = extensions.get(image.get("mime_type"))
+        mime = image.get("mime_type") if isinstance(image, dict) else None
+        extension = extensions.get(mime) if isinstance(mime, str) else None
         if extension is None:
-            raise RuntimeError("Unexpected image MIME type in worker response")
+            warnings.append(f"Image {index + 1}: unexpected MIME type.")
+            continue
+        try:
+            image_bytes = base64.b64decode(image["image_base64"], validate=True)
+            with Image.open(io.BytesIO(image_bytes)) as decoded:
+                if Image.MIME.get(decoded.format) != mime:
+                    raise ValueError("Image format differs from the response")
+                decoded.verify()
+            with Image.open(io.BytesIO(image_bytes)) as decoded:
+                decoded.load()
+        except (KeyError, TypeError, ValueError, OSError, SyntaxError, Image.DecompressionBombError):
+            warnings.append(f"Image {index + 1}: invalid image data.")
+            continue
         path = destination / f"image-{index}.{extension}"
-        path.write_bytes(base64.b64decode(image["image_base64"], validate=True))
+        path.write_bytes(image_bytes)
         metadata["images"].append(
             {
                 **{key: value for key, value in image.items() if key != "image_base64"},
                 "path": str(path),
             }
         )
+    if not metadata["images"]:
+        raise RuntimeError("The response contains no usable generated images. " + " ".join(warnings))
+    if warnings:
+        metadata["client_warnings"] = warnings
     (destination / "result.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return metadata
 

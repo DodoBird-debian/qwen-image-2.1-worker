@@ -4,8 +4,10 @@ import base64
 import io
 import json
 import random
+import tempfile
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -17,6 +19,7 @@ from qwen_worker.memory import GIB
 from qwen_worker.requests import GenerationRequest, InputError
 from qwen_worker.service import ImageService, OUTPUT_ENVELOPE_HEADROOM
 from qwen_worker.transport import fit_output, json_bytes
+from scripts.client import save_images
 
 
 def decode(item):
@@ -48,6 +51,7 @@ class TransportTests(unittest.TestCase):
         decoded = decode(item)
         self.assertEqual(decoded.size, (item["width"], item["height"]))
         self.assertLess(item["width"], 2048)
+        self.assertTrue(any("dimensions were reduced" in text for text in result["delivery"]["warnings"]))
         self.assertEqual(decoded.mode, "RGBA")
         self.assertLess(decoded.getchannel("A").getextrema()[0], 255)
         self.assertEqual(item["seed"], 42)
@@ -79,6 +83,7 @@ class TransportTests(unittest.TestCase):
                 self.assertEqual(item["seed"], 42)
                 self.assertLessEqual(json_bytes(result), budget)
                 self.assertTrue(any(call.args[2] < 95 for call in encoder.call_args_list))
+                self.assertTrue(any("quality was reduced" in text for text in result["delivery"]["warnings"]))
                 if fmt == "webp":
                     self.assertEqual(decoded.getchannel("A").tobytes(), image.getchannel("A").tobytes())
 
@@ -114,8 +119,8 @@ class TransportTests(unittest.TestCase):
         with patch("qwen_worker.transport.encode_image", wraps=encode_image) as encoder:
             fit_output(result, originals, request, 32_000)
         self.assertEqual(len(result["images"]), 2)
-        self.assertTrue(all(item["mime_type"] == "image/jpeg" for item in result["images"]))
-        self.assertEqual(decode(result["images"][0]).getpixel((0, 0)), (255, 255, 255))
+        self.assertEqual([item["mime_type"] for item in result["images"]], ["image/png", "image/jpeg"])
+        self.assertEqual(decode(result["images"][0]).getchannel("A").getextrema(), (0, 0))
         self.assertTrue(any(call.args[1] == "jpeg" and call.args[2] < 85 for call in encoder.call_args_list))
         self.assertIn("flattened on white", " ".join(result["delivery"]["warnings"]))
         self.assertFalse(result["delivery"]["partial"])
@@ -160,7 +165,85 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(len(result["images"]), 1)
         self.assertTrue(result["delivery"]["partial"])
+        self.assertNotIn("refresh_worker", result)
         self.assertLessEqual(json_bytes(result) + OUTPUT_ENVELOPE_HEADROOM, service.settings.max_output_bytes)
+
+    def test_failed_later_pass_delivers_past_images_and_requests_refresh(self):
+        calls = []
+        def pipeline(**kwargs):
+            calls.append(kwargs["generator"])
+            if len(calls) == 3:
+                raise RuntimeError("fixture pass failed")
+            return SimpleNamespace(images=[Image.new("RGB", (256, 256), (42, 21, 7))])
+
+        service = ImageService(pipeline, lambda seed: seed, Settings(), memory_budget=lambda: 4 * GIB)
+        with self.assertLogs("qwen_worker.service", level="WARNING"):
+            result = service.handle({"input": {
+                "prompt": "test", "width": 256, "height": 256, "num_images": 4, "seed": 42,
+            }})
+        self.assertEqual(calls, [42, 43, 44])
+        self.assertEqual([image["seed"] for image in result["images"]], [42, 43])
+        self.assertTrue(result["refresh_worker"])
+        self.assertTrue(result["delivery"]["partial"])
+        self.assertIn("after a generation pass failed", result["delivery"]["warnings"][-1])
+        self.assertNotIn("error", result)
+        self.assertEqual(decode(result["images"][1]).getpixel((0, 0)), (42, 21, 7))
+
+    def test_cli_saves_valid_images_after_an_invalid_entry(self):
+        image = Image.new("RGB", (256, 256), (42, 21, 7))
+        encoded = encode_image(image, "png", 95, 42)
+        invalid = {**encoded, "image_base64": "!"}
+        with tempfile.TemporaryDirectory() as temp:
+            destination = Path(temp)
+            metadata = save_images({"output": {"images": [encoded, invalid, {**encoded, "seed": 44}]}},
+                                   destination)
+            self.assertEqual([item["seed"] for item in metadata["images"]], [42, 44])
+            self.assertEqual(metadata["client_warnings"], ["Image 2: invalid image data."])
+            self.assertTrue((destination / "image-2.png").is_file())
+            self.assertFalse((destination / "image-1.png").exists())
+            self.assertEqual(json.loads((destination / "result.json").read_text()), metadata)
+
+    def test_cli_rejects_truncated_png_and_retains_following_file_at_original_index(self):
+        frame = encode_image(Image.new("RGB", (256, 256)), "png", 95, 42)
+        data = base64.b64decode(frame["image_base64"])
+        for cutoff in (24, len(data) // 2):
+            broken = {**frame, "image_base64": base64.b64encode(data[:cutoff]).decode()}
+            with self.subTest(cutoff=cutoff), tempfile.TemporaryDirectory() as tmp:
+                dest = Path(tmp)
+                response = save_images({"output": {"images": [broken, frame]}}, dest)
+                self.assertEqual(response["client_warnings"], ["Image 1: invalid image data."])
+                self.assertEqual([i["path"] for i in response["images"]], [str(dest / "image-1.png")])
+                self.assertFalse((dest / "image-0.png").exists())
+                with self.assertRaisesRegex(RuntimeError, "no usable generated images"):
+                    save_images({"images": [broken]}, dest)
+
+    def test_cli_surfaces_nested_and_top_level_worker_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for error in ({"error": "budget"}, {"status": "COMPLETED", "output": {"error": "budget"}}):
+                with self.assertRaisesRegex(RuntimeError, "budget"):
+                    save_images(error, Path(tmp))
+            with self.assertRaisesRegex(RuntimeError, "no generated images"):
+                save_images({"output": {"images": []}}, Path(tmp))
+
+    def test_sequential_packing_keeps_a_small_frame_at_its_original_resolution(self):
+        calls = []
+        large = self.noisy((768, 768))
+        small = Image.new("RGBA", large.size, (0, 0, 0, 0))
+        def pipeline(**kwargs):
+            calls.append(kwargs["generator"])
+            return SimpleNamespace(images=[large if len(calls) == 1 else small])
+
+        service = ImageService(pipeline, lambda seed: seed, Settings(max_output_bytes=500_000),
+                               memory_budget=lambda: 4 * GIB)
+        result = service.handle({"input": {
+            "prompt": "test", "width": 768, "height": 768, "num_images": 2, "seed": 42,
+        }})
+        self.assertEqual(calls, [42, 43])
+        self.assertEqual(len(result["images"]), 2)
+        width1, width2 = [image["width"] for image in result["images"]]
+        self.assertLess(width1, 768)
+        self.assertEqual(width2, 768)
+        self.assertFalse(result["delivery"]["partial"])
 
 
 class GenerationRoutingTests(unittest.TestCase):
