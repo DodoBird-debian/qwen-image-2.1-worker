@@ -1,0 +1,207 @@
+{
+  "python": "3.12.16",
+  "platform": "Linux",
+  "packages": {
+    "Pillow": "12.3.0",
+    "runpod": "1.12.0",
+    "aiohttp": "3.14.5",
+    "aiohttp-retry": "2.9.1"
+  },
+  "worker_source_fingerprint": "618017a8a336ef8a",
+  "cases": {
+    "upload": {
+      "status": "reproduced",
+      "observed": {
+        "first_delivery_post_attempts": 1,
+        "first_delivery_events": [
+          "worker logged JOB COMPLETED",
+          "SDK POST",
+          "SDK logged upload failure",
+          "SDK logged Finished."
+        ],
+        "posted_seed_lists": [
+          [
+            42
+          ],
+          [
+            142
+          ]
+        ],
+        "pipeline_calls_for_same_job_id": [
+          [
+            42
+          ],
+          [
+            142
+          ]
+        ]
+      }
+    },
+    "parallel": {
+      "status": "reproduced",
+      "observed": {
+        "pipeline_calls": [
+          [
+            42,
+            43,
+            44,
+            45
+          ]
+        ],
+        "encoding_attempts": [
+          42,
+          43,
+          44
+        ],
+        "encoded_seeds": [
+          42,
+          43
+        ],
+        "returned_seeds": [],
+        "refresh_worker": true,
+        "error": "Inference error: fixture encoder failed on seed 44"
+      }
+    },
+    "sequential": {
+      "status": "reproduced",
+      "observed": {
+        "pipeline_calls": [
+          [
+            42
+          ],
+          [
+            43
+          ]
+        ],
+        "fit_attempts": [
+          {
+            "seeds": [
+              42
+            ],
+            "recovery": false,
+            "json_bytes": 7016189,
+            "first_decoded_size": [
+              1626,
+              813
+            ]
+          },
+          {
+            "seeds": [
+              42,
+              43
+            ],
+            "recovery": false
+          },
+          {
+            "seeds": [
+              42
+            ],
+            "recovery": true
+          }
+        ],
+        "inline_body_budget": 7995904,
+        "prior_fit_decoded_and_within_budget": true,
+        "repacked_first_pass": true,
+        "returned_seeds": [],
+        "error": "Inference error: fixture optimizer unavailable from pass two onward"
+      }
+    },
+    "late-stop": {
+      "status": "reproduced",
+      "observed": {
+        "pipeline_calls": [
+          [
+            42,
+            43
+          ]
+        ],
+        "fitted_seeds_before_stop": [
+          42,
+          43
+        ],
+        "cancelled": true,
+        "returned_seeds": []
+      }
+    },
+    "packing": {
+      "status": "measured",
+      "observed": {
+        "pipeline_calls": [
+          [
+            42,
+            43,
+            44,
+            45
+          ]
+        ],
+        "rss_with_input_frames_mib": 108.7,
+        "peak_before_packing_mib": 108.7,
+        "peak_after_packing_mib": 558.1,
+        "seconds": 6.626,
+        "json_bytes": 5870379,
+        "returned_dimensions": [
+          [
+            575,
+            575
+          ],
+          [
+            575,
+            575
+          ],
+          [
+            575,
+            575
+          ],
+          [
+            575,
+            575
+          ]
+        ],
+        "returned_seeds": [
+          42,
+          43,
+          44,
+          45
+        ],
+        "within_cap": true
+      }
+    },
+    "frozen": {
+      "status": "reproduced",
+      "observed": {
+        "service_sha256": "e8b556015b6d241785ed5ff0ebfa12ed6af9582668fdab4897707f94b4456db5",
+        "pipeline_calls": [
+          [
+            42
+          ]
+        ],
+        "inline_cap_bytes": 8000000,
+        "png_base64_bytes": 11202008,
+        "returned_seeds": [],
+        "size_rejection": true,
+        "error": "Encoded images exceed the inline output limit. Use fewer images, smaller dimensions, or JPEG when transparency is not required."
+      }
+    },
+    "cli": {
+      "status": "reproduced",
+      "observed": {
+        "submitted_ids": [
+          "local-1",
+          "local-2"
+        ],
+        "cli_status_polls": [
+          "local-1",
+          "local-2"
+        ],
+        "cli_errors": [
+          "Runpod returned HTTP 503",
+          "Runpod returned HTTP 503"
+        ],
+        "files_before_manual_recovery": [],
+        "original_seeds_recovered_by_get": [
+          42
+        ]
+      }
+    }
+  }
+}

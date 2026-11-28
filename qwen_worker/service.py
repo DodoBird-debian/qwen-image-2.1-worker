@@ -4,14 +4,20 @@ import logging
 import threading
 import time
 import traceback
+from dataclasses import replace
 from collections.abc import Callable
 from contextlib import nullcontext
+from PIL import Image
 
 from qwen_worker.config import Settings
 from qwen_worker.images import decode_images, encode_image
 from qwen_worker.memory import GIB, MemoryEstimate, estimate, text_token_bound
 from qwen_worker.requests import MAX_SEED, GenerationRequest, InputError
 from qwen_worker.transport import MAX_INLINE_BYTES, fit_output, json_bytes
+from qwen_worker.recovery import open_job, load_result, save_image, save_result, atomic_write
+import json
+import hashlib
+import io
 
 logger = logging.getLogger("qwen_worker.service")
 OUTPUT_ENVELOPE_HEADROOM = 4096
@@ -104,16 +110,31 @@ class ImageService:
         return fit_output(result, originals, request, budget, final=final, generation_failed=generation_failed)
 
     def _append_images(self, encoded: list, output, seeds: list[int],
-                       request: GenerationRequest, originals: list) -> None:
+                       request: GenerationRequest, originals: list, recovery=None,
+                       recovery_errors: list | None = None) -> list[int]:
         images = getattr(output, "images", None)
         if images is None or len(images) != len(seeds):
             actual = None if images is None else len(images)
             raise RuntimeError(f"Pipeline returned {actual} images; expected {len(seeds)}")
         started = time.perf_counter()
+        failed = []
         for image, seed in zip(images, seeds):
-            originals.append((image.copy(), seed))
-            encoded.append(encode_image(image, request.output_format, request.quality, seed))
+            try:
+                save_image(recovery, image, seed)
+            except Exception:
+                logger.exception("Recovery storage failed for seed %s", seed)
+                if recovery_errors is not None:
+                    recovery_errors.append(seed)
+            try:
+                entry = encode_image(image, request.output_format, request.quality, seed)
+            except Exception:
+                logger.exception("Encoding failed for seed %s", seed)
+                failed.append(seed)
+                continue
+            originals.append((image, seed))
+            encoded.append(entry)
         logger.info("Output encoding: %d image(s), %.3fs", len(seeds), time.perf_counter() - started)
+        return failed
 
     def handle(self, job: dict, *, stop_event: threading.Event | None = None) -> dict:
         job_started = time.perf_counter()
@@ -121,6 +142,25 @@ class ImageService:
         if not isinstance(job, dict):
             raise InputError("job must contain an input object")
         request = GenerationRequest.parse(job.get("input", {}))
+        recovery = open_job(job)
+        if recovery:
+            directory, manifest = recovery
+            model = {"id": self.settings.model_id, "revision": self.settings.model_revision}
+            if "model" in manifest and manifest["model"] != model:
+                raise RuntimeError("Recovery job belongs to a different model revision")
+            if "model" not in manifest:
+                manifest["model"] = model
+                atomic_write(directory / "manifest.json", json.dumps(manifest).encode())
+        recovered = load_result(recovery)
+        if recovered is not None:
+            return recovered
+        if recovery:
+            directory, manifest = recovery
+            if "resolved_seed" in manifest:
+                request = replace(request, seed=manifest["resolved_seed"])
+            else:
+                manifest["resolved_seed"] = request.seed
+                atomic_write(directory / "manifest.json", json.dumps(manifest).encode())
         actual_steps = self.sampling_steps or request.steps
         if actual_steps != request.steps:
             logger.info("Native checkpoint schedule: requested %d steps, actual %d; request passed unchanged",
@@ -156,9 +196,20 @@ class ImageService:
         succeeded = False
         stopped = False
         generation_failed = False
+        failed_seeds = []
         refresh_worker = False
         originals = []
         encoded = []
+        recovery_errors = []
+        if recovery:
+            for entry in recovery[1]["images"]:
+                content = (recovery[0] / entry["file"]).read_bytes()
+                if hashlib.sha256(content).hexdigest() != entry["sha256"]:
+                    raise RuntimeError("Stored recovery image failed its checksum")
+                with Image.open(io.BytesIO(content)) as stored:
+                    image = stored.copy()
+                originals.append((image, entry["seed"]))
+                encoded.append(encode_image(image, request.output_format, request.quality, entry["seed"]))
         with self._lock:
             lock_wait = time.perf_counter() - started
             logger.info("[JOB %s] Inference lock acquired after %.3fs", job_id, lock_wait)
@@ -179,12 +230,23 @@ class ImageService:
                 context = self.job_context() if self.job_context is not None else nullcontext()
                 with context as stats:
                     seeds = [(request.seed + index) % (MAX_SEED + 1) for index in range(request.num_images)]
-                    groups = [seeds] if can_parallel else [[seed] for seed in seeds]
+                    completed = {seed for _, seed in originals}
+                    missing = [seed for seed in seeds if seed not in completed]
+                    groups = [missing] if can_parallel and missing else [[seed] for seed in missing]
+                    if not groups and encoded:
+                        candidate = {**result, "images": encoded.copy(), "inference_seconds": 0.0}
+                        response_bytes = self._fit_output(candidate, originals, request)
+                        result = candidate
+                        try:
+                            save_result(recovery, result)
+                        except Exception:
+                            logger.exception("Recovery storage failed for the fitted result")
+                            recovery_errors.append("result")
                     for index, group in enumerate(groups, 1):
                         check_stop(stop_event)
                         logger.info("[JOB %s] Generation pass %d/%d: %d image(s), seeds=%s",
                                     job_id, index, len(groups), len(group), group)
-                        previous_count = len(originals)
+                        pipeline_returned = False
                         try:
                             call_kwargs = dict(kwargs)
                             if stop_event is not None:
@@ -198,6 +260,7 @@ class ImageService:
                             inference_at = time.perf_counter()
                             try:
                                 output = self.pipeline(**call_kwargs, generator=generator)
+                                pipeline_returned = True
                             finally:
                                 call_seconds = time.perf_counter() - inference_at
                                 inference_seconds += call_seconds
@@ -205,15 +268,28 @@ class ImageService:
                                         job_id, index, len(groups), len(group), call_seconds)
                             encoding_at = time.perf_counter()
                             try:
-                                check_stop(stop_event)
-                                self._append_images(encoded, output, group, request, originals)
+                                failed_seeds = self._append_images(encoded, output, group, request, originals,
+                                                                   recovery, recovery_errors)
+                                if failed_seeds and not encoded:
+                                    raise InputError(f"Could not encode output seeds {failed_seeds}")
                                 # Fit each pass from original encodings. A previously shrunken
                                 # image can otherwise leave a later image at full resolution.
                                 candidate = {**result, "images": encoded.copy(),
                                              "inference_seconds": round(inference_seconds, 3)}
                                 response_bytes = self._fit_output(candidate, originals, request,
-                                                                  final=index == len(groups))
+                                                                  final=index == len(groups),
+                                                                  generation_failed=bool(failed_seeds))
                                 result = candidate
+                                if len(originals) == request.num_images and not failed_seeds and not recovery_errors:
+                                    try:
+                                        save_result(recovery, result)
+                                    except Exception:
+                                        logger.exception("Could not save final recovery result")
+                                        recovery_errors.append("result")
+                                check_stop(stop_event)
+                                if failed_seeds:
+                                    generation_failed = True
+                                    break
                             finally:
                                 encoding_seconds += time.perf_counter() - encoding_at
                                 del output
@@ -223,7 +299,7 @@ class ImageService:
                             if not result["images"]:
                                 raise
                             generation_failed = True
-                            refresh_worker = not isinstance(error, InputError)
+                            refresh_worker = not pipeline_returned and not isinstance(error, InputError)
                             logger.exception("[JOB %s] Generation pass %d failed; delivering prior images",
                                              job_id, index)
                             break
@@ -236,12 +312,32 @@ class ImageService:
                 if generation_failed:
                     # Retry only the CPU packing of already-produced images. Ask the SDK
                     # to refresh the worker after it delivers the partial response.
-                    result.update(images=encoded[:previous_count],
-                                  inference_seconds=round(inference_seconds, 3))
                     if refresh_worker:
                         result["refresh_worker"] = True
-                    response_bytes = self._fit_output(result, originals[:previous_count],
-                                                      request, generation_failed=True)
+                    count = len(result["images"])
+                    delivery = result.setdefault("delivery", {
+                        "requested_images": request.num_images,
+                        "returned_images": count,
+                        "partial": count < request.num_images,
+                        "warnings": [],
+                    })
+                    delivery["partial"] = count < request.num_images
+                    warning = (f"Returned {count} of {request.num_images} requested images after a generation pass failed. "
+                               "No inference was retried.")
+                    if warning not in delivery["warnings"]:
+                        delivery["warnings"].append(warning)
+                    if failed_seeds:
+                        delivery["warnings"].append(f"Could not encode seeds: {', '.join(map(str, failed_seeds))}.")
+                    response_bytes = self._check_output_size(result)
+                if recovery_errors:
+                    delivery = result.setdefault("delivery", {
+                        "requested_images": request.num_images,
+                        "returned_images": len(result["images"]),
+                        "partial": len(result["images"]) < request.num_images,
+                        "warnings": [],
+                    })
+                    delivery["warnings"].append("Recovery storage failed for this job. Download the inline results.")
+                    response_bytes = self._check_output_size(result)
                 check_stop(stop_event)
                 succeeded = True
             except GenerationStopped as error:

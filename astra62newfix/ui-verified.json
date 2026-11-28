@@ -1,0 +1,272 @@
+{
+  "ui": {
+    "version": "1.2.1",
+    "head": "f9f00506e007d6701358a8f20b4976c15af680c0",
+    "fileCount": 73,
+    "sha256": "e1d3bf5f8f63ad93e641f4ff668d644d22278bbe7995bacf3005b7dad82cec0c"
+  },
+  "node": "v24.22.2",
+  "chromium": "156.0.8078.79",
+  "playwright": "1.56.1",
+  "vite": "7.3.7",
+  "transport": "Loopback Vite with an in-memory Runpod fixture",
+  "cases": {
+    "partial-resume": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42,
+            43
+          ]
+        ],
+        "polls": [
+          "job-1"
+        ]
+      }
+    },
+    "concurrent-save": {
+      "passed": true,
+      "observed": {
+        "firstDurableWrite": [
+          "42",
+          "43"
+        ],
+        "durableAfterClosingBothTabs": [
+          "42",
+          "43"
+        ],
+        "submittedSeedGroups": [
+          [
+            42,
+            43
+          ]
+        ],
+        "statusGets": [
+          "job-1",
+          "job-1"
+        ]
+      }
+    },
+    "disjoint-partial-saves": {
+      "passed": true,
+      "observed": {
+        "storedSeedsByWriteOrder": [
+          [
+            "42",
+            "43"
+          ],
+          [
+            "43",
+            "42"
+          ]
+        ]
+      }
+    },
+    "stale-trim": {
+      "passed": true,
+      "observed": {
+        "historyLimit": 1,
+        "recoveredBeforeTrim": {
+          "status": "COMPLETED",
+          "seeds": [
+            "42"
+          ]
+        },
+        "originalAfterTrim": {
+          "status": "COMPLETED",
+          "seeds": [
+            "42"
+          ]
+        },
+        "newerJob": {
+          "status": "COMPLETED",
+          "seeds": [
+            "80"
+          ]
+        },
+        "submittedSeedGroups": [
+          [
+            42
+          ],
+          [
+            80
+          ]
+        ],
+        "statusGets": [
+          "job-1",
+          "job-1",
+          "job-2"
+        ]
+      }
+    },
+    "quota-series": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42
+          ],
+          [
+            43
+          ],
+          [
+            44
+          ]
+        ]
+      }
+    },
+    "interrupted-status": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42
+          ]
+        ],
+        "polls": [
+          "job-1",
+          "job-1"
+        ]
+      }
+    },
+    "history-read-error": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42
+          ]
+        ],
+        "polls": [
+          "job-1",
+          "job-1"
+        ]
+      }
+    },
+    "seed-mismatch": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42,
+            43
+          ],
+          [
+            43
+          ]
+        ]
+      }
+    },
+    "duplicate-seed": {
+      "passed": true,
+      "observed": {
+        "submitted": [
+          [
+            42,
+            43,
+            44
+          ]
+        ],
+        "retained": [
+          [
+            "42",
+            7124
+          ],
+          [
+            "42",
+            7329
+          ],
+          [
+            "44",
+            7508
+          ]
+        ]
+      }
+    },
+    "pending-decode-retention": {
+      "passed": true,
+      "observed": {
+        "deletedPending": false,
+        "deletedEmpty": true,
+        "pendingSeeds": [
+          "42"
+        ]
+      }
+    },
+    "unverified-id": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42,
+            43
+          ]
+        ],
+        "polls": [
+          "job-typo",
+          "unrelated",
+          "job-1",
+          "job-1"
+        ]
+      }
+    },
+    "lost-single-receipt": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42
+          ]
+        ]
+      }
+    },
+    "persistent-decode-failure": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42,
+            43
+          ]
+        ],
+        "polls": [
+          "job-1",
+          "job-1"
+        ]
+      }
+    },
+    "cached-decode-after-expiry": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42,
+            43
+          ]
+        ],
+        "polls": [
+          "job-1"
+        ],
+        "seeds": [
+          "42",
+          "43"
+        ]
+      }
+    },
+    "all-decodes-recover": {
+      "passed": true,
+      "observed": {
+        "posts": [
+          [
+            42,
+            43
+          ]
+        ],
+        "polls": [
+          "job-1"
+        ]
+      }
+    }
+  }
+}

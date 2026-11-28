@@ -1,0 +1,247 @@
+{
+  "ui": {
+    "version": "1.2.1",
+    "head": "f9f00506e007d6701358a8f20b4976c15af680c0",
+    "fileCount": 73,
+    "sha256": "bfcea951996b25a52b97f0840b3554fc66566e1ef383dd44aa3f366a396e4fef"
+  },
+  "node": "v24.22.2",
+  "chromium": "156.0.8078.79",
+  "playwright": "1.56.1",
+  "vite": "7.3.7",
+  "transport": "Loopback Vite with an in-memory Runpod fixture",
+  "cases": {
+    "partial-resume": {
+      "reproduced": true,
+      "observed": {
+        "originallyDelivered": [
+          42,
+          43
+        ],
+        "locallySavedForOriginalId": [
+          "42"
+        ],
+        "initialGets": 1,
+        "getsAfterManualResume": 1,
+        "submittedSeedGroups": [
+          [
+            42,
+            43
+          ],
+          [
+            43
+          ]
+        ],
+        "confirmedNewJobs": 1
+      }
+    },
+    "concurrent-save": {
+      "reproduced": true,
+      "observed": {
+        "firstDurableWrite": [
+          "42",
+          "43"
+        ],
+        "durableAfterClosingBothTabs": [
+          "42"
+        ],
+        "submittedSeedGroups": [
+          [
+            42,
+            43
+          ]
+        ],
+        "statusGets": [
+          "job-1",
+          "job-1"
+        ]
+      }
+    },
+    "stale-trim": {
+      "reproduced": true,
+      "observed": {
+        "historyLimit": 1,
+        "recoveredBeforeTrim": {
+          "status": "COMPLETED",
+          "seeds": [
+            "42"
+          ]
+        },
+        "originalAfterTrim": null,
+        "newerJob": {
+          "status": "COMPLETED",
+          "seeds": [
+            "80"
+          ]
+        },
+        "submittedSeedGroups": [
+          [
+            42
+          ],
+          [
+            80
+          ]
+        ],
+        "statusGets": [
+          "job-1",
+          "job-1",
+          "job-2"
+        ]
+      }
+    },
+    "quota-series": {
+      "reproduced": true,
+      "observed": {
+        "submittedSeedGroups": [
+          [
+            42
+          ],
+          [
+            43
+          ],
+          [
+            44
+          ]
+        ],
+        "failedFrameWrites": 3,
+        "inMemorySeeds": [
+          [
+            "42"
+          ],
+          [
+            "43"
+          ],
+          [
+            "44"
+          ]
+        ],
+        "durableSeeds": [
+          [],
+          [],
+          []
+        ],
+        "historyNote": "Saved in this browser. Images stay until you delete them.",
+        "reopenedCellStates": [
+          "unavailable",
+          "unavailable",
+          "unavailable"
+        ]
+      }
+    },
+    "interrupted-status": {
+      "reproduced": true,
+      "observed": {
+        "automaticStatusGetsBeforePause": 1,
+        "pausedWithKnownId": "job-1",
+        "statusGetsAfterManualCheck": [
+          "job-1",
+          "job-1"
+        ],
+        "recoveredSeeds": [
+          "42"
+        ],
+        "submittedSeedGroups": [
+          [
+            42
+          ]
+        ]
+      }
+    },
+    "history-read-error": {
+      "reproduced": true,
+      "observed": {
+        "knownId": "job-1",
+        "statusGetsSentByFirstManualCheck": 0,
+        "statusGetsSentBySecondManualCheck": 1,
+        "recoveredSeeds": [
+          "42"
+        ],
+        "submittedSeedGroups": [
+          [
+            42
+          ]
+        ]
+      }
+    },
+    "seed-mismatch": {
+      "reproduced": true,
+      "observed": {
+        "requestedSeeds": [
+          42,
+          43
+        ],
+        "firstDurableSeeds": [
+          "42",
+          "99"
+        ],
+        "cellStatesBeforeRetry": [
+          "failed",
+          "failed"
+        ],
+        "confirmedRetrySeeds": [
+          42,
+          43
+        ],
+        "matchingSeedGeneratedTwice": 42
+      }
+    },
+    "unverified-id": {
+      "reproduced": true,
+      "observed": {
+        "acceptedIdWhoseReplyWasLost": "job-1",
+        "originalRetainedSeeds": [
+          42,
+          43
+        ],
+        "cellsAfterCandidate404": [
+          {
+            "status": "failed",
+            "job": "job-typo"
+          },
+          {
+            "status": "failed",
+            "job": "job-typo"
+          }
+        ],
+        "guardCleared": true,
+        "statusGets": [
+          "job-typo",
+          "job-2"
+        ],
+        "submittedSeedGroups": [
+          [
+            42,
+            43
+          ],
+          [
+            42,
+            43
+          ]
+        ]
+      }
+    },
+    "lost-single-receipt": {
+      "reproduced": true,
+      "observed": {
+        "persistenceEnabled": true,
+        "firstTabBlocked": true,
+        "freshTabOfferedGenerate": true,
+        "originalRetainedSeeds": [
+          42
+        ],
+        "originalDurableRecord": null,
+        "submittedSeedGroups": [
+          [
+            42
+          ],
+          [
+            42
+          ]
+        ],
+        "statusGets": [
+          "job-2"
+        ]
+      }
+    }
+  }
+}

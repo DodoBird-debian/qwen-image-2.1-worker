@@ -302,3 +302,39 @@ request and representative editing/2K jobs on the chosen Runpod GPU.
 The container pins its direct dependencies and the Diffusers source commit.
 The build resolves transitive dependencies; record `pip freeze` and deploy an image
 digest to reproduce the exact tested environment.
+
+## Recovery storage
+
+Set `QWEN_RECOVERY_DIR` to an access-restricted shared filesystem mounted at the
+same location on every worker of one endpoint. The worker stores full-resolution
+PNG files, request fingerprints, resolved seeds, and completed results there.
+The filesystem must support atomic rename and cross-worker POSIX advisory locks.
+These files contain generated images and job identifiers. Restrict access to
+authorized operators and use encrypted storage where appropriate.
+
+Each job directory is named by the SHA-256 hash of its Runpod job ID. Its
+`manifest.json` lists the original images and their checksums. Replaying a job
+reuses its completed output or continues from the recorded seeds. The storage
+does not expire files automatically. To apply a 72-hour retention policy, first
+preview the eligible inactive jobs and then run the same command with `--apply`.
+The command skips jobs whose locks are held and keeps lock files for safe reuse.
+
+```sh
+python -m qwen_worker.recovery --root /mnt/qwen-recovery --older-than-hours 72
+python -m qwen_worker.recovery --root /mnt/qwen-recovery --older-than-hours 72 --apply
+```
+
+The CLI records outstanding submissions under `OUTPUT_DIR/.runpod/` before any
+generation request. Use the same output directory and endpoint to resume
+after an interrupted wait. If the submission response was lost, look up the
+accepted ID in Runpod. Use `--discard-uncertain` only after checking that the
+endpoint did not accept the request.
+
+```sh
+python scripts/client.py YOUR_ENDPOINT_ID --resume JOB_ID --output-dir outputs
+python scripts/client.py --recover-worker JOB_ID --recovery-dir /mnt/qwen-recovery --output-dir recovered
+```
+
+The second command reads original PNGs from a private mount and verifies their
+checksums. It works independently of Runpod status retention and uses the
+operator's filesystem permissions.

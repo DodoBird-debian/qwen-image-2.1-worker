@@ -48,10 +48,31 @@ except ImportError:
 logger.info("[STARTUP] RunPod SDK import=%.3fs; process elapsed=%.3fs",
             time.perf_counter() - _sdk_started, time.perf_counter() - _PROCESS_STARTED)
 
+def configure_delivery_retry():
+    """Retry result uploads using the same job ID after transient failures."""
+    from aiohttp import ClientConnectionError, ServerTimeoutError
+    from aiohttp_retry import FibonacciRetry
+    from runpod.serverless.modules import rp_http
+
+    def retry_options(*args, **kwargs):
+        kwargs["exceptions"] = {ClientConnectionError, ServerTimeoutError, asyncio.TimeoutError}
+        return FibonacciRetry(*args, **kwargs)
+
+    rp_http.FibonacciRetry = retry_options
+    original = rp_http._transmit
+
+    async def transmit(session, url, data):
+        job_id = session.headers.get("X-Request-ID", "unknown")
+        await original(session, url, data)
+        logger.info("[JOB %s] RunPod acknowledged result upload", job_id)
+
+    rp_http._transmit = transmit
+
 from qwen_worker.config import Settings
 from qwen_worker.requests import InputError
 from qwen_worker.runtime import load_service, prepare_startup_model, source_fingerprint
 from qwen_worker.service import GenerationStopped, check_stop
+from qwen_worker.recovery import job_lock
 logger.info("[STARTUP] Worker source fingerprint=%s", source_fingerprint())
 
 _service = None
@@ -83,12 +104,14 @@ def handler(job, *, stop_event: threading.Event | None = None):
 
     try:
         check_stop(stop_event)
-        service = get_service()
-        result = service.handle(job, stop_event=stop_event)
+        with job_lock(job):
+            check_stop(stop_event)
+            service = get_service()
+            result = service.handle(job, stop_event=stop_event)
         check_stop(stop_event)
         elapsed = time.perf_counter() - t0
         logger.info("-" * 80)
-        logger.info("<<< [RUNPOD JOB COMPLETED] ID: %s in %.2fs", job_id, elapsed)
+        logger.info("<<< [INFERENCE COMPLETE] ID: %s in %.2fs; result delivery pending", job_id, elapsed)
         logger.info("=" * 80)
         return result
     except GenerationStopped:
@@ -173,5 +196,6 @@ if __name__ == "__main__":
     else:
         # Pre-warm service before registering with RunPod serverless queue
         get_service()
+        configure_delivery_retry()
         runpod.serverless.start({"handler": serverless_handler})
 

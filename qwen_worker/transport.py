@@ -19,11 +19,17 @@ MIN_OUTPUT_SIDE = 256
 def json_bytes(result: dict) -> int:
     # ASCII escaping is at least as large as the SDK's ensure_ascii=False.
     # Count base64 AND JSON metadata; the caller reserves envelope headroom.
-    return len(json.dumps(result, ensure_ascii=True).encode("utf-8"))
+    images = result.get("images")
+    if not isinstance(images, list):
+        return len(json.dumps(result, ensure_ascii=True).encode("utf-8"))
+    metadata = {**result, "images": []}
+    return (len(json.dumps(metadata, ensure_ascii=True).encode("utf-8"))
+            + sum(image_json_bytes(image) for image in images)
+            + max(0, len(images) - 1) * 2)
 
 
 def image_json_bytes(image: dict) -> int:
-    return json_bytes({**image, "image_base64": ""}) + len(image["image_base64"])
+    return len(json.dumps({**image, "image_base64": ""}, ensure_ascii=True).encode("utf-8")) + len(image["image_base64"])
 
 
 def fit_output(result: dict, originals: list[tuple[Image.Image, int]],
@@ -77,11 +83,11 @@ def fit_output(result: dict, originals: list[tuple[Image.Image, int]],
 
     delivery()
     before = json_bytes(result)
-    if before <= budget:
+    if before <= budget - 512:
         return before
     started = time.perf_counter()
     # Leave room for the final elapsed-time digits when fitting between passes.
-    target = budget - 64
+    target = budget - 512
     # Do not reduce an image to a meaningless 1x1 just to claim the batch fits.
     # Images already smaller than the floor are never enlarged.
     floor = max(min(1.0, MIN_OUTPUT_SIDE / min(image.size)) for image, _ in originals)
